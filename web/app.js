@@ -26,6 +26,8 @@ const elements = {
   statusModel: document.querySelector("#statusModel"),
   statusContext: document.querySelector("#statusContext"),
   statusDisk: document.querySelector("#statusDisk"),
+  modeSelect: document.querySelector("#modeSelect"),
+  modeHint: document.querySelector("#modeHint"),
 };
 
 let state = loadState();
@@ -36,7 +38,7 @@ function makeId() {
 }
 
 function newTask() {
-  return { id: makeId(), title: "新任务", createdAt: Date.now(), messages: [], events: [] };
+  return { id: makeId(), title: "新任务", createdAt: Date.now(), messages: [], events: [], mode: "auto" };
 }
 
 function loadState() {
@@ -105,6 +107,17 @@ function renderAll() {
   renderTasks();
   renderConversation();
   renderActivity();
+  elements.modeSelect.value = activeTask().mode || "auto";
+  updateModeHint();
+}
+
+function updateModeHint() {
+  const mode = elements.modeSelect.value;
+  elements.modeHint.textContent = {
+    plan: "Plan：只读分析，不会修改文件",
+    edits: "Edits：允许编辑文件，不运行命令",
+    auto: "Auto：读取、编辑与工具调用",
+  }[mode];
 }
 
 function escapeHtml(value) {
@@ -175,7 +188,7 @@ async function sendMessage(text) {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: task.id, message: text.trim() }),
+      body: JSON.stringify({ session_id: task.id, message: text.trim(), mode: task.mode || "auto" }),
     });
     if (!response.ok || !response.body) throw new Error(`请求失败 (${response.status})`);
     const reader = response.body.getReader();
@@ -261,6 +274,11 @@ elements.form.addEventListener("submit", event => {
   event.preventDefault();
   sendMessage(elements.input.value);
 });
+elements.modeSelect.addEventListener("change", () => {
+  activeTask().mode = elements.modeSelect.value;
+  saveState();
+  updateModeHint();
+});
 elements.input.addEventListener("input", resizeInput);
 elements.input.addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -318,5 +336,4 @@ document.addEventListener("keydown", event => {
 renderAll();
 fetchStatus();
 elements.input.focus();
-
 
