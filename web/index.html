@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Local Build Agent</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="task-sidebar" id="taskSidebar" aria-label="任务列表">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
+          <div>
+            <div class="brand-name">Local Build</div>
+            <div class="brand-caption">PRIVATE AGENT</div>
+          </div>
+        </div>
+
+        <button class="new-task-button" id="newTaskButton" type="button">
+          <span aria-hidden="true">＋</span> 新建任务
+          <kbd>Ctrl N</kbd>
+        </button>
+
+        <div class="sidebar-label">本地任务</div>
+        <nav class="task-list" id="taskList"></nav>
+
+        <div class="sidebar-footer">
+          <div class="local-meter">
+            <span class="status-dot" id="sidebarStatusDot"></span>
+            <div>
+              <strong id="sidebarModel">Qwythos 9B</strong>
+              <span id="sidebarStatus">正在连接 Ollama…</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <button class="icon-button mobile-only" id="sidebarToggle" type="button" aria-label="打开任务列表">☰</button>
+          <div class="workspace-block">
+            <div class="eyebrow">WORKSPACE</div>
+            <div class="workspace-path" id="workspacePath">正在读取…</div>
+          </div>
+          <div class="topbar-actions">
+            <div class="mode-pill"><span class="status-dot"></span> 本地模式</div>
+            <button class="icon-button" id="activityToggle" type="button" aria-label="显示运行记录">⌁</button>
+          </div>
+        </header>
+
+        <section class="conversation" id="conversation" aria-live="polite">
+          <div class="welcome" id="welcome">
+            <div class="welcome-symbol" aria-hidden="true">⌘</div>
+            <p class="eyebrow">LOCAL CODING AGENT</p>
+            <h1>从一个任务开始。</h1>
+            <p class="welcome-copy">读取代码、修改文件、运行命令，并把每一步留在本机。</p>
+            <div class="suggestion-grid">
+              <button type="button" data-prompt="检查当前项目的架构，并指出最值得优先改进的地方。">
+                <span>项目体检</span><small>梳理结构与风险</small>
+              </button>
+              <button type="button" data-prompt="运行当前项目的测试，诊断失败原因并给出修复方案。">
+                <span>运行测试</span><small>定位失败与回归</small>
+              </button>
+              <button type="button" data-prompt="阅读 README 和主要源码，告诉我这个项目如何工作。">
+                <span>理解代码库</span><small>快速建立上下文</small>
+              </button>
+              <button type="button" data-prompt="检查当前工作区是否有明显的安全问题或敏感信息风险。">
+                <span>安全检查</span><small>保持本地与谨慎</small>
+              </button>
+            </div>
+          </div>
+          <div class="message-list" id="messageList"></div>
+          <div class="thinking-row hidden" id="thinkingRow">
+            <span></span><span></span><span></span><em id="thinkingLabel">Agent 正在思考</em>
+          </div>
+        </section>
+
+        <footer class="composer-wrap">
+          <form class="composer" id="composerForm">
+            <textarea id="promptInput" rows="1" maxlength="32000" placeholder="让 Agent 构建、修复或解释…" aria-label="给 Agent 的任务"></textarea>
+            <div class="composer-bottom">
+              <div class="composer-meta">
+                <span class="safe-chip">安全模式</span>
+                <span>Enter 发送 · Shift Enter 换行</span>
+              </div>
+              <button class="send-button" id="sendButton" type="submit" aria-label="发送任务">↑</button>
+            </div>
+          </form>
+          <p class="privacy-note">仅连接 127.0.0.1 · 文件操作限制在当前 workspace</p>
+        </footer>
+      </main>
+
+      <aside class="activity-panel" id="activityPanel" aria-label="运行记录">
+        <div class="activity-header">
+          <div>
+            <div class="eyebrow">ACTIVITY</div>
+            <h2>运行记录</h2>
+          </div>
+          <button class="icon-button" id="closeActivity" type="button" aria-label="关闭运行记录">×</button>
+        </div>
+        <div class="machine-card">
+          <div><span>模型</span><strong id="statusModel">—</strong></div>
+          <div><span>上下文</span><strong id="statusContext">—</strong></div>
+          <div><span>D 盘可用</span><strong id="statusDisk">—</strong></div>
+        </div>
+        <div class="activity-empty" id="activityEmpty">
+          <div>◇</div>
+          <p>工具调用会显示在这里。</p>
+        </div>
+        <div class="activity-list" id="activityList"></div>
+      </aside>
+    </div>
+    <div class="scrim" id="scrim"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
+
+
