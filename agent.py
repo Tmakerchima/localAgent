@@ -239,6 +239,13 @@ class LocalAgent:
         system_prompt = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8")
         context = f"\n\nRuntime context:\n- Workspace: {self.workspace}\n- Platform: {sys.platform}\n"
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt + context}]
+        self.mode = "auto"
+
+    MODE_DIRECTIVES = {
+        "plan": "PLAN MODE: inspect and explain only. Do not modify files or run commands. Return a concrete implementation plan.",
+        "edits": "EDITS MODE: you may read and edit workspace files. Do not run shell commands; describe commands that the user can run.",
+        "auto": "AUTO MODE: complete the task using the available workspace tools while respecting safe-mode command restrictions.",
+    }
 
     def api_chat(self) -> dict[str, Any]:
         payload = {
@@ -268,6 +275,10 @@ class LocalAgent:
             ) from exc
 
     def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        if self.mode == "plan" and name in {"write_file", "replace_in_file", "run_command"}:
+            return "ERROR: Plan mode is read-only; no files or commands were changed."
+        if self.mode == "edits" and name == "run_command":
+            return "ERROR: Edits mode does not run shell commands; switch to Auto mode after reviewing the edits."
         if name == "inspect_workspace":
             result = inspect_workspace(self.workspace, arguments.get("max_depth", 3))
         elif name == "read_file":
@@ -306,7 +317,8 @@ class LocalAgent:
             result = result[:limit] + f"\n... truncated at {limit} characters"
         return result
 
-    def turn(self, user_text: str, on_event: Callable[[dict[str, Any]], None] | None = None) -> str:
+    def turn(self, user_text: str, mode: str = "auto", on_event: Callable[[dict[str, Any]], None] | None = None) -> str:
+        self.mode = mode if mode in self.MODE_DIRECTIVES else "auto"
         def emit(event: dict[str, Any]) -> None:
             if on_event is not None:
                 on_event(event)
@@ -322,7 +334,7 @@ class LocalAgent:
                 output = event["output"]
                 print(output[:1000] + ("\n..." if len(output) > 1000 else ""), flush=True)
 
-        self.messages.append({"role": "user", "content": user_text})
+        self.messages.append({"role": "user", "content": f"[{self.MODE_DIRECTIVES[self.mode]}]\n\n{user_text}"})
         for step in range(1, int(self.config.get("max_steps", 16)) + 1):
             emit({"type": "step", "step": step})
             response = self.api_chat()
