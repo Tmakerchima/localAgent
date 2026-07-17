@@ -45,6 +45,14 @@
             <div class="workspace-path" id="workspacePath">正在读取…</div>
           </div>
           <div class="topbar-actions">
+            <label class="mode-control" for="modeSelect">
+              <span class="mode-control-label">MODE</span>
+              <select id="modeSelect" aria-label="Agent 模式">
+                <option value="plan">Plan · 只读规划</option>
+                <option value="edits">Edits · 编辑文件</option>
+                <option value="auto" selected>Auto · 自动执行</option>
+              </select>
+            </label>
             <div class="mode-pill"><span class="status-dot"></span> 本地模式</div>
             <button class="icon-button" id="activityToggle" type="button" aria-label="显示运行记录">⌁</button>
           </div>
@@ -82,7 +90,7 @@
             <textarea id="promptInput" rows="1" maxlength="32000" placeholder="让 Agent 构建、修复或解释…" aria-label="给 Agent 的任务"></textarea>
             <div class="composer-bottom">
               <div class="composer-meta">
-                <span class="safe-chip">安全模式</span>
+                <span class="safe-chip" id="modeHint">Auto：读取、编辑与工具调用</span>
                 <span>Enter 发送 · Shift Enter 换行</span>
               </div>
               <button class="send-button" id="sendButton" type="submit" aria-label="发送任务">↑</button>
@@ -116,5 +124,4 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
-
 
