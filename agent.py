@@ -318,6 +318,9 @@ class LocalAgent:
         return result
 
     def turn(self, user_text: str, mode: str = "auto", on_event: Callable[[dict[str, Any]], None] | None = None) -> str:
+        if callable(mode) and on_event is None:
+            on_event = mode
+            mode = "auto"
         self.mode = mode if mode in self.MODE_DIRECTIVES else "auto"
         def emit(event: dict[str, Any]) -> None:
             if on_event is not None:
