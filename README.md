@@ -59,6 +59,7 @@ py .\agent.py --workspace . "检查项目并运行测试"
   `localStorage` 中。
 - 中间对话区：支持 Markdown、代码块、快捷建议、Enter 发送和 Shift+Enter 换行。
 - 右侧运行记录：实时展示工具名称、参数、结果、错误和机器状态。
+- 模式下拉框：Plan（只读规划）、Edits（允许编辑但不运行命令）、Auto（自动完成任务）。
 - 顶部状态：显示 workspace、本地模式、模型、上下文和磁盘余量。
 - 响应式布局：窄屏时任务列表与运行记录变为抽屉。
 - 每个任务在网页服务器内拥有独立模型上下文；网页服务器重启后，历史仍可见，
@@ -169,5 +170,4 @@ py -m py_compile agent.py web_server.py
 - [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)：原生工具调用循环。
 - [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：
   本项目使用的 `Q4_K_M` 模型。
-
 
