@@ -194,7 +194,10 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             emit({"type": "done"})
             return
         try:
-            final_text = session.agent.turn(message.strip(), on_event=emit)
+            mode = payload.get("mode", "auto")
+            if mode not in {"plan", "edits", "auto"}:
+                raise AgentError("mode must be plan, edits, or auto")
+            final_text = session.agent.turn(message.strip(), mode=mode, on_event=emit)
             emit({"type": "done", "content": final_text})
         except Exception as exc:  # Keep an agent failure contained to its stream.
             emit({"type": "error", "message": str(exc)})
@@ -245,5 +248,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 
