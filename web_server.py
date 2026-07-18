@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from agent import AgentError, LocalAgent, ROOT, load_json
+from agent import AgentError, LOCAL_OPENER, LocalAgent, ROOT, load_json
 
 
 WEB_ROOT = ROOT / "web"
@@ -140,12 +140,18 @@ class AgentWebHandler(BaseHTTPRequestHandler):
         loaded = False
         try:
             base_url = self.app.config["base_url"].rstrip("/")
-            with urllib.request.urlopen(base_url + "/api/tags", timeout=3) as response:
+            with LOCAL_OPENER.open(base_url + "/api/tags", timeout=3) as response:
                 tags = json.loads(response.read().decode("utf-8"))
-            installed = any(item.get("name") == model for item in tags.get("models", []))
-            with urllib.request.urlopen(base_url + "/api/ps", timeout=3) as response:
+            installed = any(
+                item.get("name") == model or item.get("model") == model
+                for item in tags.get("models", [])
+            )
+            with LOCAL_OPENER.open(base_url + "/api/ps", timeout=3) as response:
                 running = json.loads(response.read().decode("utf-8"))
-            loaded = any(item.get("name") == model for item in running.get("models", []))
+            loaded = any(
+                item.get("name") == model or item.get("model") == model
+                for item in running.get("models", [])
+            )
         except (OSError, urllib.error.URLError, json.JSONDecodeError):
             pass
         disk = shutil.disk_usage(self.app.workspace.anchor)
