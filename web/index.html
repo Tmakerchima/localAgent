@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="light">
     <title>Local Build Agent</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
@@ -13,8 +13,8 @@
         <div class="brand-row">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
           <div>
-            <div class="brand-name">Local Build</div>
-            <div class="brand-caption">PRIVATE AGENT</div>
+            <div class="brand-name">Local Agent</div>
+            <div class="brand-caption">CLAUDE CODE STYLE</div>
           </div>
         </div>
 
@@ -54,7 +54,7 @@
               </select>
             </label>
             <div class="mode-pill"><span class="status-dot"></span> 本地模式</div>
-            <button class="icon-button" id="activityToggle" type="button" aria-label="显示运行记录">⌁</button>
+            <button class="icon-button activity-toggle-button" id="activityToggle" type="button" aria-label="显示运行记录" title="打开运行记录">日志</button>
           </div>
         </header>
 
@@ -93,7 +93,7 @@
                 <span class="safe-chip" id="modeHint">Auto：读取、编辑与工具调用</span>
                 <span>Enter 发送 · Shift Enter 换行</span>
               </div>
-              <button class="send-button" id="sendButton" type="submit" aria-label="发送任务">↑</button>
+              <button class="send-button" id="sendButton" type="submit" aria-label="发送任务" title="发送任务">↑</button>
             </div>
           </form>
           <p class="privacy-note">仅连接 127.0.0.1 · 文件操作限制在当前 workspace</p>
