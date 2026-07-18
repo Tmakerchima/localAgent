@@ -1,8 +1,8 @@
-# Local Build Agent（Ollama + Qwythos 9B）
+# Local Build Agent（Ollama + Qwen 3.5 9B）
 
 这是一个在本机运行的编码 Agent，提供类似 Codex 的浏览器工作台和传统命令行界面。
 项目参考了官方 [xai-org/grok-build](https://github.com/xai-org/grok-build) 的分层：
-界面、Agent runtime、Tools、Workspace，但使用本地 Ollama 和 Qwythos 9B 推理，
+界面、Agent runtime、Tools、Workspace，但使用本地 Ollama 和 Qwen 3.5 9B 推理，
 不是 xAI 官方客户端或 Grok Build 的分支。
 
 默认情况下，浏览器、Agent、模型和工具都在本机运行；不需要 Ollama 云端登录。
@@ -10,8 +10,8 @@
 ## 当前环境
 
 - 硬件：约 32 GB RAM、RTX 4060 Ti 8 GB VRAM。
-- 模型：`empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q4_K_M`。
-- 模型数据：约 6.8 GB，包含 Ollama 自动拉取的视觉投影层。
+- 主模型：官方 `qwen3.5:9b`，约 6.6 GB，支持工具调用。
+- 备用模型：`empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q4_K_M`，保留但不默认使用。
 - Ollama 运行时与模型均位于本项目的 D 盘目录，不占用 C 盘模型缓存。
 - Agent 和网页服务器仅使用 Python 标准库，没有 npm、PyPI 或虚拟环境依赖。
 
@@ -96,7 +96,7 @@ flowchart LR
     CLI["命令行"] --> A["LocalAgent"]
     W --> A
     A -->|"/api/chat + Tools"| O["Ollama :11434"]
-    O --> Q["Qwythos 9B"]
+    O --> Q["Qwen 3.5 9B"]
     Q -->|"回答 / 工具调用"| A
     A --> T["Workspace Tools"]
     T --> F["读取 / 原子写入 / 精确替换"]
@@ -122,7 +122,7 @@ flowchart LR
 | 内容 | 位置 | 当前约占用 |
 |---|---|---:|
 | Ollama Windows 独立运行时 | `.runtime/ollama/` | 1.84 GB |
-| Qwythos 9B 与视觉投影层 | `.data/ollama/models/` | 6.34 GiB |
+| Qwen 3.5 9B + 备用 Qwythos 9B | `.data/ollama/models/` | 约 12.48 GiB |
 | 项目源码与界面 | 项目根目录 | 小于 1 MB |
 
 查看实际占用：
@@ -144,7 +144,7 @@ Get-ChildItem .runtime,.data -Recurse -File |
 `config.json` 中的主要选项：
 
 - `context_length`：默认 8192。提高到 16384/32768 会增加内存与显存压力。
-- `max_output_tokens`：默认 2048，避免模型在异常情况下无限生成。
+- `max_output_tokens`：默认 384，减少 8GB 显存环境下工具步骤之间的冗长等待。
 - `think`：默认 `false`；复杂任务可临时启用隐藏推理。
 - `keep_alive`：模型在内存中的保留时间。
 - `max_steps`：单次任务允许的最大工具循环数。
@@ -161,7 +161,7 @@ py -m py_compile agent.py web_server.py
 已验证项目首页、静态资源、状态接口、NDJSON 对话流、真实模型回答和
 `inspect_workspace` 工具调用。
 
-如果 UI 首次请求出现 `HTTP 502`，通常是 Ollama 正在冷启动 Qwythos 模型，
+如果 UI 首次请求出现 `HTTP 502`，通常是 Ollama 正在冷启动 Qwen 模型，
 不是测试任务本身失败。保持 `scripts/start-ui.ps1` 运行并重试即可；Agent 对
 502/503/504 已内置自动重试。
 
@@ -172,6 +172,6 @@ py -m py_compile agent.py web_server.py
 - [Ollama Windows 文档](https://docs.ollama.com/windows)：Windows 安装及
   `OLLAMA_MODELS` 模型目录配置。
 - [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)：原生工具调用循环。
-- [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：
-  本项目使用的 `Q4_K_M` 模型。
+- [Qwen 3.5 9B（Ollama）](https://ollama.com/library/qwen3.5%3A9b)：本项目默认模型。
+- [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：备用模型。
 
