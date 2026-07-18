@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
@@ -154,6 +155,57 @@ def run_command(workspace: Path, command: str, timeout: int, allow_risky: bool) 
     return f"exit_code={completed.returncode}\n{combined}".rstrip()
 
 
+def validate_web_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise AgentError("Only complete http:// or https:// URLs can be opened")
+    if parsed.username or parsed.password:
+        raise AgentError("URLs containing credentials are not allowed")
+    return urllib.parse.urlunsplit(parsed)
+
+
+def open_url(url: str, browser: str = "edge") -> str:
+    target = validate_web_url(url)
+    if os.name != "nt":
+        raise AgentError("The Edge launcher is currently supported on Windows only")
+    if browser != "edge":
+        raise AgentError("Only Microsoft Edge is supported")
+    candidates = [
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Microsoft/Edge/Application/msedge.exe",
+    ]
+    executable = next((path for path in candidates if path.is_file()), None)
+    if executable is None:
+        raise AgentError("Microsoft Edge was not found")
+    subprocess.Popen(
+        [str(executable), target],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+    return f"Opened {target} in Microsoft Edge. The user must complete sign-in and confirmations."
+
+
+def asks_for_active_model(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        phrase in lowered
+        for phrase in ("当前模型", "什么模型", "哪个模型", "what model", "which model")
+    )
+
+
+def requested_website(text: str) -> str | None:
+    lowered = text.lower()
+    if not any(term in lowered for term in ("打开", "open", "浏览器", "edge")):
+        return None
+    match = re.search(r"https?://[^\s<>\"']+", text, re.IGNORECASE)
+    if match:
+        return validate_web_url(match.group(0).rstrip(".,;!?，。；！？"))
+    if "bilibili" in lowered or "b站" in lowered or "哔哩哔哩" in lowered:
+        return "https://www.bilibili.com/"
+    return None
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -219,13 +271,28 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Run a PowerShell command in the workspace and return stdout, stderr, and exit code.",
+            "description": "Run a PowerShell command and return stdout, stderr, and exit code. In Auto mode the command may use absolute paths, start applications, and reach the local machine outside the coding workspace.",
             "parameters": {
                 "type": "object",
                 "required": ["command"],
                 "properties": {
                     "command": {"type": "string"},
                     "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 900},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_url",
+            "description": "Open a complete HTTP(S) URL in Microsoft Edge. This only navigates; the user completes login, credentials, CAPTCHA, and confirmations.",
+            "parameters": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {"type": "string"},
+                    "browser": {"type": "string", "enum": ["edge"]},
                 },
             },
         },
@@ -238,14 +305,17 @@ class LocalAgent:
         self.config = config
         self.allow_risky = allow_risky
         system_prompt = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8")
-        context = f"\n\nRuntime context:\n- Workspace: {self.workspace}\n- Platform: {sys.platform}\n"
+        context = (
+            f"\n\nRuntime context:\n- Workspace: {self.workspace}\n- Platform: {sys.platform}"
+            f"\n- Active model: {self.config['model']}\n"
+        )
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt + context}]
         self.mode = "auto"
 
     MODE_DIRECTIVES = {
         "plan": "PLAN MODE: inspect and explain only. Do not modify files or run commands. Return a concrete implementation plan.",
         "edits": "EDITS MODE: you may read and edit workspace files. Do not run shell commands; describe commands that the user can run.",
-        "auto": "AUTO MODE: complete the task using the available workspace tools while respecting safe-mode command restrictions.",
+        "auto": "AUTO MODE: execute the task with full local command, application, browser, and filesystem reach. Destructive or credential actions still require an explicit user request.",
     }
 
     def api_chat(self) -> dict[str, Any]:
@@ -291,10 +361,10 @@ class LocalAgent:
         raise AgentError(f"Ollama request failed: {last_error}")
 
     def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        if self.mode == "plan" and name in {"write_file", "replace_in_file", "run_command"}:
+        if self.mode == "plan" and name in {"write_file", "replace_in_file", "run_command", "open_url"}:
             return "ERROR: Plan mode is read-only; no files or commands were changed."
-        if self.mode == "edits" and name == "run_command":
-            return "ERROR: Edits mode does not run shell commands; switch to Auto mode after reviewing the edits."
+        if self.mode == "edits" and name in {"run_command", "open_url"}:
+            return "ERROR: Edits mode only changes workspace files; switch to Auto mode for commands or browser navigation."
         if name == "inspect_workspace":
             result = inspect_workspace(self.workspace, arguments.get("max_depth", 3))
         elif name == "read_file":
@@ -324,8 +394,10 @@ class LocalAgent:
                 self.workspace,
                 arguments["command"],
                 int(arguments.get("timeout_seconds", self.config.get("command_timeout_seconds", 120))),
-                self.allow_risky,
+                self.allow_risky or self.mode == "auto",
             )
+        elif name == "open_url":
+            result = open_url(arguments["url"], arguments.get("browser", "edge"))
         else:
             raise AgentError(f"Unknown tool: {name}")
         limit = int(self.config.get("max_tool_output_chars", 16000))
@@ -353,6 +425,35 @@ class LocalAgent:
                 output = event["output"]
                 print(output[:1000] + ("\n..." if len(output) > 1000 else ""), flush=True)
 
+        if asks_for_active_model(user_text):
+            content = f"当前实际运行模型是 `{self.config['model']}`。"
+            self.messages.extend(
+                [{"role": "user", "content": user_text}, {"role": "assistant", "content": content}]
+            )
+            emit({"type": "assistant", "content": content, "final": True})
+            return content
+
+        website = requested_website(user_text)
+        if website and self.mode == "auto":
+            emit({"type": "step", "step": 1})
+            arguments = {"url": website, "browser": "edge"}
+            emit({"type": "tool_start", "name": "open_url", "arguments": arguments})
+            try:
+                output = self.execute_tool("open_url", arguments)
+            except (AgentError, OSError, subprocess.SubprocessError) as exc:
+                output = f"ERROR: {exc}"
+            emit({"type": "tool_result", "name": "open_url", "output": output})
+            content = (
+                f"已在 Microsoft Edge 中打开 {website}。请你在浏览器中完成登录、验证码和确认。"
+                if not output.startswith("ERROR:")
+                else f"无法打开网页：{output[7:]}"
+            )
+            self.messages.extend(
+                [{"role": "user", "content": user_text}, {"role": "assistant", "content": content}]
+            )
+            emit({"type": "assistant", "content": content, "final": True})
+            return content
+
         execution_hint = ""
         lowered_request = user_text.lower()
         if self.mode == "auto" and any(term in lowered_request for term in ("test", "测试")):
@@ -366,7 +467,7 @@ class LocalAgent:
                 "content": f"[{self.MODE_DIRECTIVES[self.mode]}]\n\nCurrent objective: {user_text}{execution_hint}",
             }
         )
-        action_terms = ("test", "run", "check", "inspect", "edit", "fix", "测试", "运行", "检查", "诊断", "修复", "修改", "读取")
+        action_terms = ("test", "run", "check", "inspect", "edit", "fix", "open", "browser", "website", "测试", "运行", "检查", "诊断", "修复", "修改", "读取", "打开", "浏览器", "网站")
         needs_tool = any(term in user_text.lower() for term in action_terms)
         used_tool = False
         tool_nudges = 0
