@@ -146,6 +146,8 @@ button { color: inherit; }
 .local-meter strong, .local-meter span { display: block; }
 .local-meter strong { max-width: 185px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .local-meter div > span { margin-top: 3px; color: var(--faint); font-size: 10px; }
+.sidebar-model-select { display: block; width: 190px; padding: 0 18px 1px 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; font-weight: 650; cursor: pointer; text-overflow: ellipsis; }
+.sidebar-model-select:disabled { cursor: wait; opacity: .65; }
 .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(231,255,97,.08); }
 .status-dot.offline { background: var(--danger); box-shadow: none; }
 
