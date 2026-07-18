@@ -15,6 +15,7 @@ const elements = {
   form: document.querySelector("#composerForm"),
   input: document.querySelector("#promptInput"),
   send: document.querySelector("#sendButton"),
+  stop: document.querySelector("#stopButton"),
   thinking: document.querySelector("#thinkingRow"),
   thinkingLabel: document.querySelector("#thinkingLabel"),
   activityList: document.querySelector("#activityList"),
@@ -36,6 +37,8 @@ let activeController = null;
 let runTimer = null;
 let runStartedAt = 0;
 let runPhase = "Agent 正在处理";
+let pendingInstructions = [];
+let stopRequested = false;
 
 function makeId() {
   return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9-]/g, "");
@@ -183,6 +186,7 @@ async function sendMessage(text) {
   if (running || !text.trim()) return;
   const task = activeTask();
   running = true;
+  stopRequested = false;
   activeController = new AbortController();
   addMessage("user", text.trim());
   elements.input.value = "";
@@ -222,6 +226,10 @@ async function sendMessage(text) {
     activeController = null;
     setRunning(false);
     fetchStatus();
+    if (!stopRequested && pendingInstructions.length) {
+      const nextInstruction = pendingInstructions.shift();
+      setTimeout(() => sendMessage(nextInstruction), 0);
+    }
   }
 }
 
@@ -236,6 +244,10 @@ function handleStreamEvent(event) {
     setRunPhase(`正在运行 ${event.name}`);
   } else if (event.type === "tool_result") {
     updateLatestEvent(event.name, { detail: event.output.slice(0, 1800), status: event.output.startsWith("ERROR:") ? "error" : "done" });
+  } else if (event.type === "tool_progress") {
+    const elapsed = event.elapsed_seconds || 0;
+    updateLatestEvent(event.name, { detail: `命令仍在运行 · ${elapsed}s / 120s`, status: "running" });
+    setRunPhase(`正在运行 ${event.name} · ${elapsed}s / 120s`);
   } else if (event.type === "error") {
     addMessage("assistant", `任务未完成：${event.message}`);
     addEvent({ title: "Agent 错误", detail: event.message, status: "error" });
@@ -243,13 +255,11 @@ function handleStreamEvent(event) {
 }
 
 function setRunning(isRunning, label = "Agent 正在思考") {
-  elements.input.disabled = isRunning;
   elements.sidebarModel.disabled = isRunning;
   elements.thinking.classList.toggle("hidden", !isRunning);
-  elements.send.textContent = isRunning ? "■" : "↑";
-  elements.send.setAttribute("aria-label", isRunning ? "停止任务" : "发送任务");
-  elements.send.title = isRunning ? "停止当前任务" : "发送任务";
-  elements.send.classList.toggle("stop", isRunning);
+  elements.stop.classList.toggle("hidden", !isRunning);
+  elements.send.setAttribute("aria-label", isRunning ? "追加指令" : "发送任务");
+  elements.send.title = isRunning ? "将新指令排队" : "发送任务";
   if (runTimer) clearInterval(runTimer);
   runTimer = null;
   if (isRunning) {
@@ -268,7 +278,35 @@ function setRunPhase(label) {
 
 function updateRunLabel() {
   const seconds = Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000));
-  elements.thinkingLabel.textContent = `${runPhase} · ${seconds}s`;
+  const queued = pendingInstructions.length ? ` · 已排队 ${pendingInstructions.length} 条` : "";
+  const hint = seconds >= 30 ? " · 可停止或追加指令" : "";
+  elements.thinkingLabel.textContent = `${runPhase} · ${seconds}s${queued}${hint}`;
+}
+
+function queueInstruction(text) {
+  const instruction = text.trim();
+  if (!instruction) return;
+  pendingInstructions.push(instruction);
+  elements.input.value = "";
+  resizeInput();
+  addEvent({ title: "追加指令已排队", detail: instruction, status: "done" });
+  updateRunLabel();
+}
+
+async function stopCurrentTask() {
+  if (!running) return;
+  stopRequested = true;
+  pendingInstructions = [];
+  const sessionId = activeTask().id;
+  try {
+    await fetch("/api/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+  } catch (_) {}
+  activeController?.abort();
+  addEvent({ title: "正在停止任务", detail: "已通知后端终止当前命令", status: "done" });
 }
 
 function scrollToBottom(smooth = true) {
@@ -321,11 +359,12 @@ function closeOverlays() {
 elements.form.addEventListener("submit", event => {
   event.preventDefault();
   if (running) {
-    activeController?.abort();
+    queueInstruction(elements.input.value);
     return;
   }
   sendMessage(elements.input.value);
 });
+elements.stop.addEventListener("click", stopCurrentTask);
 elements.modeSelect.addEventListener("change", () => {
   activeTask().mode = elements.modeSelect.value;
   saveState();
@@ -409,4 +448,3 @@ document.addEventListener("keydown", event => {
 renderAll();
 fetchStatus();
 elements.input.focus();
-
