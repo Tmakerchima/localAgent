@@ -161,6 +161,10 @@ py -m py_compile agent.py web_server.py
 已验证项目首页、静态资源、状态接口、NDJSON 对话流、真实模型回答和
 `inspect_workspace` 工具调用。
 
+如果 UI 首次请求出现 `HTTP 502`，通常是 Ollama 正在冷启动 Qwythos 模型，
+不是测试任务本身失败。保持 `scripts/start-ui.ps1` 运行并重试即可；Agent 对
+502/503/504 已内置自动重试。
+
 ## 上游资料
 
 - [xai-org/grok-build 官方仓库](https://github.com/xai-org/grok-build)：官方 Rust
