@@ -35,7 +35,7 @@ button { color: inherit; }
 
 .app-shell {
   display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--activity);
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
   height: 100vh;
   min-height: 560px;
 }
@@ -223,10 +223,44 @@ button { color: inherit; }
 .send-button:disabled { opacity: .28; cursor: default; transform: none; }
 .privacy-note { margin: 7px 0 0; text-align: center; color: #555752; font-size: 9px; }
 
-.activity-panel { border-left: 1px solid var(--line-soft); padding: 20px 17px; overflow-y: auto; }
+.activity-panel {
+  position: fixed;
+  z-index: 30;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(var(--activity), 92vw);
+  border-left: 1px solid var(--line-soft);
+  padding: 20px 17px;
+  overflow-y: auto;
+  transform: translateX(102%);
+  transition: transform .22s ease;
+  box-shadow: -18px 0 50px rgba(50, 43, 35, .12);
+}
+.activity-panel.open { transform: none; }
 .activity-header { display: flex; justify-content: space-between; align-items: center; }
 .activity-header h2 { margin: 5px 0 0; font-size: 16px; font-weight: 570; }
-.activity-header .icon-button { display: none; }
+.activity-header .icon-button { display: block; }
+.activity-rail-button {
+  position: fixed;
+  z-index: 31;
+  right: 0;
+  top: 50%;
+  width: 28px;
+  height: 58px;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
+  background: #fffefb;
+  color: var(--muted);
+  font-size: 22px;
+  cursor: pointer;
+  transition: right .22s ease, background .15s ease;
+  box-shadow: -3px 3px 14px rgba(62, 54, 44, .08);
+}
+.activity-rail-button:hover { background: #f4f0e9; color: var(--text); }
+body.activity-open .activity-rail-button { right: min(var(--activity), 92vw); }
 .machine-card { margin: 22px 0; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: #141619; }
 .machine-card div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
 .machine-card span { color: var(--faint); font-size: 10px; }
@@ -249,10 +283,6 @@ button { color: inherit; }
 
 @media (max-width: 1120px) {
   .app-shell { grid-template-columns: var(--sidebar) minmax(0,1fr); }
-  .activity-panel { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(var(--activity),92vw); transform: translateX(102%); transition: transform .22s ease; box-shadow: -18px 0 50px rgba(0,0,0,.4); }
-  .activity-panel.open { transform: none; }
-  .activity-header .icon-button { display: block; }
-  .scrim.show { display: block; position: fixed; z-index: 25; inset: 0; background: rgba(0,0,0,.5); }
 }
 
 @media (max-width: 720px) {
@@ -318,7 +348,6 @@ button, textarea, select { font-family: inherit; }
 .mode-control select { color: var(--text); }
 .mode-control option { color: var(--text); background: #fffefb; }
 .mode-pill { border-color: var(--line); color: var(--muted); background: #fbfaf6; }
-.activity-toggle-button { width: auto; min-width: 42px; padding: 0 9px; font-size: 11px; }
 .welcome-symbol { border-color: #dfd9ce; background: #fffdf9; color: var(--accent); box-shadow: 0 8px 24px rgba(66, 56, 45, .06); }
 .welcome h1 { font-family: inherit; font-weight: 560; letter-spacing: -.035em; }
 .suggestion-grid button { border-color: var(--line); background: #fffefb; color: var(--text); }
