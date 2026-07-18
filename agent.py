@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable
@@ -266,13 +267,28 @@ class LocalAgent:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=1800) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
-            raise AgentError(
-                f"Cannot reach Ollama at {self.config['base_url']}. Run scripts\\start.ps1 first. ({exc})"
-            ) from exc
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(request, timeout=1800) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code not in {502, 503, 504} or attempt == 2:
+                    raise AgentError(
+                        f"Ollama returned HTTP {exc.code}. It may still be loading the model; "
+                        "wait a minute and retry."
+                    ) from exc
+                time.sleep(2 * (attempt + 1))
+            except urllib.error.URLError as exc:
+                last_error = exc
+                if attempt == 2:
+                    raise AgentError(
+                        f"Cannot reach Ollama at {self.config['base_url']}. "
+                        "Run scripts\\start.ps1 first, then retry."
+                    ) from exc
+                time.sleep(2 * (attempt + 1))
+        raise AgentError(f"Ollama request failed: {last_error}")
 
     def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
         if self.mode == "plan" and name in {"write_file", "replace_in_file", "run_command"}:
