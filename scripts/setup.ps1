@@ -10,7 +10,7 @@ $archivePath = Join-Path $projectRoot '.runtime\ollama-windows-amd64.zip'
 $ollamaExe = Join-Path $runtimeDir 'ollama.exe'
 $downloadUrl = 'https://ollama.com/download/ollama-windows-amd64.zip'
 $requiredFreeGB = 11
-$modelName = 'hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q4_K_M'
+$modelName = 'qwen3.5:9b'
 
 $driveName = ([System.IO.Path]::GetPathRoot($projectRoot)).TrimEnd('\').TrimEnd(':')
 $drive = Get-PSDrive -Name $driveName
@@ -23,6 +23,7 @@ if ($freeGB -lt $requiredFreeGB) {
 New-Item -ItemType Directory -Force -Path $runtimeDir, $modelDir | Out-Null
 [Environment]::SetEnvironmentVariable('OLLAMA_MODELS', $modelDir, 'User')
 $env:OLLAMA_MODELS = $modelDir
+$env:OLLAMA_FLASH_ATTENTION = '1'
 $env:OLLAMA_HOST = '127.0.0.1:11434'
 
 if (-not (Test-Path -LiteralPath $ollamaExe)) {
@@ -62,7 +63,7 @@ if (-not $serverReady) {
 }
 
 if (-not $SkipModelPull) {
-    Write-Host 'Pulling Qwythos 9B Q4_K_M plus its vision projector (about 6.8 GB total) from Hugging Face...'
+    Write-Host 'Pulling official Qwen 3.5 9B (about 6.6 GB) from Ollama...'
     & $ollamaExe pull $modelName
     if ($LASTEXITCODE -ne 0) { throw 'Model download failed.' }
 }
