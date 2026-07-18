@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import os
 from pathlib import Path
 import re
 import socket
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -257,23 +260,111 @@ ACTION_TERMS = (
     "create", "write", "copy", "move", "send", "ocr", "automation", "powershell", "script",
     "测试", "运行", "检查", "诊断", "修复", "修改", "读取", "打开", "浏览器", "网站",
     "创建", "新建", "写入", "复制", "移动", "发送", "联系人", "自动化", "脚本",
+    "接入", "安装", "下载", "配置", "启用", "添加", "增加", "集成",
 )
 
 
 def requested_missing_capability(text: str) -> str | None:
     """Return a deterministic explanation for actions the runtime cannot perform."""
     lowered = text.lower()
-    if re.search(r"(?:编写|写一个|创建|新建|开发).{0,12}(?:脚本|工具|代码|项目)", lowered):
+    provision_terms = ("接入", "安装", "下载", "配置", "启用", "添加", "增加", "集成", "install", "setup")
+    if any(term in lowered for term in provision_terms):
+        return None
+    if re.search(r"(?:编写|写一个|创建|新建|开发).{0,12}(?:脚本|工具|代码|项目|能力)", lowered):
         return None
     qq_terms = ("qq", "腾讯qq")
-    qq_actions = ("联系人", "发送", "消息", "点击", "输入", "ocr", "自动化", "contact", "send")
+    qq_actions = ("发送", "消息", "点击", "输入", "自动化", "send", "type", "click")
     if any(term in lowered for term in qq_terms) and any(term in lowered for term in qq_actions):
+        vision_status = (
+            "当前运行时可以截图并用 OCR 查找 QQ 界面文字"
+            if desktop_vision_available()
+            else "当前运行时也尚未安装截图/OCR 能力"
+        )
         return (
-            "当前运行时尚未安装 QQ 桌面自动化能力，因此不能识别联系人、点击 QQ 控件或发送消息。"
-            "现有工具只能读写工作区文件、运行 PowerShell 和在 Edge 中打开网页。"
-            "需要先接入截图/OCR 或 Windows UI Automation，并使用“准备草稿→用户确认→发送”的两阶段工具。"
+            f"{vision_status}，但尚未安装经过验证的鼠标/键盘发送能力，"
+            "因此不能点击 QQ 控件或发送消息。需要先实现“准备草稿→用户确认→发送”的两阶段工具。"
         )
     return None
+
+
+def find_desktop_tool(name: str) -> str | None:
+    located = shutil.which(name)
+    if located:
+        return located
+    candidates: list[Path] = []
+    if name == "winapp":
+        candidates.append(Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WindowsApps/winapp.exe")
+    elif name == "tesseract":
+        candidates.extend(
+            [
+                ROOT / ".runtime/tools/tesseract/tesseract.exe",
+                Path(os.environ.get("ProgramFiles", "")) / "Tesseract-OCR/tesseract.exe",
+            ]
+        )
+    return str(next((path for path in candidates if path.is_file()), "")) or None
+
+
+def desktop_vision_available() -> bool:
+    return bool(find_desktop_tool("winapp") and find_desktop_tool("tesseract"))
+
+
+def inspect_desktop_app(app: str, query: str) -> str:
+    if os.name != "nt":
+        raise AgentError("Desktop OCR is currently supported on Windows only")
+    if not re.fullmatch(r"[\w .-]{1,80}", app, re.UNICODE):
+        raise AgentError("app must be a short process name or window title")
+    if not query.strip() or len(query) > 200:
+        raise AgentError("query must contain between 1 and 200 characters")
+    winapp = find_desktop_tool("winapp")
+    tesseract = find_desktop_tool("tesseract")
+    if not winapp or not tesseract:
+        raise AgentError("Desktop OCR dependencies are not installed (requires winapp and tesseract)")
+
+    output_dir = ROOT / ".local-agent" / "desktop"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "-", app).strip("-") or "app"
+    screenshot = output_dir / f"{safe_name}-{int(time.time())}.png"
+    capture = subprocess.run(
+        [winapp, "ui", "screenshot", "-a", app, "--capture-screen", "--output", str(screenshot), "--json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    if capture.returncode != 0 or not screenshot.is_file():
+        raise AgentError(f"Unable to capture {app}: {(capture.stderr or capture.stdout).strip()}")
+    ocr = subprocess.run(
+        [tesseract, str(screenshot), "stdout", "-l", "eng", "tsv"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    if ocr.returncode != 0:
+        raise AgentError(f"OCR failed: {ocr.stderr.strip()}")
+    needle = query.casefold().strip()
+    matches: list[dict[str, Any]] = []
+    for row in csv.DictReader(io.StringIO(ocr.stdout), delimiter="\t"):
+        text = (row.get("text") or "").strip()
+        if needle not in text.casefold():
+            continue
+        try:
+            confidence = float(row.get("conf") or -1)
+        except ValueError:
+            confidence = -1
+        matches.append(
+            {
+                "text": text,
+                "confidence": round(confidence, 1),
+                "bounds": [int(row["left"]), int(row["top"]), int(row["width"]), int(row["height"])],
+            }
+        )
+    return json.dumps(
+        {"app": app, "query": query, "matches": matches[:20], "screenshot": str(screenshot)},
+        ensure_ascii=False,
+    )
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -367,15 +458,26 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_desktop_app",
+            "description": "Capture a running Windows application and use OCR to find visible text. This is read-only and cannot click, type, or send messages.",
+            "parameters": {
+                "type": "object",
+                "required": ["app", "query"],
+                "properties": {
+                    "app": {"type": "string"},
+                    "query": {"type": "string"},
+                },
+            },
+        },
+    },
 ]
 
-AVAILABLE_CAPABILITIES = (
+BASE_CAPABILITIES = (
     "inspect workspace files; read, create, and replace UTF-8 files inside the workspace; "
     "run PowerShell commands in Auto mode; open HTTP(S) pages in Microsoft Edge"
-)
-UNAVAILABLE_CAPABILITIES = (
-    "screen capture, OCR, mouse clicks, keyboard injection, generic Windows UI automation, "
-    "QQ contact lookup, and QQ message sending"
 )
 
 class LocalAgent:
@@ -388,11 +490,17 @@ class LocalAgent:
         guidance_path = self.workspace / "AGENTS.md"
         if guidance_path.is_file():
             guidance = guidance_path.read_text(encoding="utf-8", errors="replace")[:16000]
+        available_capabilities = BASE_CAPABILITIES
+        unavailable_capabilities = "mouse clicks, keyboard injection, and QQ message sending"
+        if desktop_vision_available():
+            available_capabilities += "; capture running Windows applications and locate visible text with OCR"
+        else:
+            unavailable_capabilities = "screen capture, OCR, " + unavailable_capabilities
         context = (
             f"\n\nRuntime context:\n- Workspace: {self.workspace}\n- Platform: {sys.platform}"
             f"\n- Active model: {self.config['model']}"
-            f"\n- Available capabilities: {AVAILABLE_CAPABILITIES}"
-            f"\n- Unavailable capabilities: {UNAVAILABLE_CAPABILITIES}\n"
+            f"\n- Available capabilities: {available_capabilities}"
+            f"\n- Unavailable capabilities: {unavailable_capabilities}\n"
         )
         if guidance:
             context += f"\nWorkspace AGENTS.md instructions:\n{guidance}\n"
@@ -513,6 +621,8 @@ class LocalAgent:
             )
         elif name == "open_url":
             result = open_url(arguments["url"], arguments.get("browser", "edge"))
+        elif name == "inspect_desktop_app":
+            result = inspect_desktop_app(arguments["app"], arguments["query"])
         else:
             raise AgentError(f"Unknown tool: {name}")
         limit = int(self.config.get("max_tool_output_chars", 16000))
@@ -756,4 +866,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

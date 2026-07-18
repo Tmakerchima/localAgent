@@ -1,4 +1,28 @@
 const STORAGE_KEY = "local-build-agent.tasks.v1";
+const PAIRING_TOKEN_KEY = "local-build-agent.pairing-token.v1";
+const IS_LOCAL_UI = ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
+const API_BASE = IS_LOCAL_UI ? "" : "http://127.0.0.1:8765";
+
+async function apiFetch(path, options = {}, mayPrompt = true) {
+  const headers = new Headers(options.headers || {});
+  if (!IS_LOCAL_UI) {
+    const token = localStorage.getItem(PAIRING_TOKEN_KEY);
+    if (token) headers.set("X-Local-Agent-Token", token);
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+    ...(IS_LOCAL_UI ? {} : { targetAddressSpace: "local" }),
+  });
+  if (!IS_LOCAL_UI && response.status === 401 && mayPrompt) {
+    const token = window.prompt("请输入本地 Companion 终端显示的配对码：");
+    if (token?.trim()) {
+      localStorage.setItem(PAIRING_TOKEN_KEY, token.trim());
+      return apiFetch(path, options, false);
+    }
+  }
+  return response;
+}
 
 const elements = {
   taskSidebar: document.querySelector("#taskSidebar"),
@@ -20,7 +44,6 @@ const elements = {
   thinkingLabel: document.querySelector("#thinkingLabel"),
   activityList: document.querySelector("#activityList"),
   activityEmpty: document.querySelector("#activityEmpty"),
-  workspace: document.querySelector("#workspacePath"),
   sidebarModel: document.querySelector("#sidebarModel"),
   sidebarStatus: document.querySelector("#sidebarStatus"),
   sidebarStatusDot: document.querySelector("#sidebarStatusDot"),
@@ -194,7 +217,7 @@ async function sendMessage(text) {
   setRunning(true, "Agent 正在思考");
 
   try {
-    const response = await fetch("/api/chat", {
+    const response = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: task.id, message: text.trim(), mode: task.mode || "auto" }),
@@ -306,7 +329,7 @@ async function stopCurrentTask() {
   pendingInstructions = [];
   const sessionId = activeTask().id;
   try {
-    await fetch("/api/cancel", {
+    await apiFetch("/api/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),
@@ -327,9 +350,8 @@ function resizeInput() {
 
 async function fetchStatus() {
   try {
-    const response = await fetch("/api/status");
+    const response = await apiFetch("/api/status");
     const status = await response.json();
-    elements.workspace.textContent = status.workspace;
     elements.statusModel.textContent = status.model.split("/").pop().split(":")[0];
     elements.statusContext.textContent = `${Math.round(status.context_length / 1024)}K`;
     elements.statusDisk.textContent = `${status.disk_free_gb} GB`;
@@ -344,7 +366,15 @@ async function fetchStatus() {
       }));
     }
     elements.sidebarModel.value = status.model;
-    elements.sidebarStatus.textContent = status.model_loaded ? "模型已加载" : status.model_installed ? "已安装 · 等待任务" : "模型未安装";
+    elements.sidebarStatus.textContent = status.model_warming
+      ? "正在后台加载模型…"
+      : status.model_loaded
+        ? "模型已加载"
+        : status.model_warm_error
+          ? "模型加载失败 · 可重试"
+          : status.model_installed
+            ? "已安装 · 等待任务"
+            : "模型未安装";
     elements.sidebarStatusDot.classList.toggle("offline", !status.model_installed);
   } catch (_) {
     elements.sidebarStatus.textContent = "Ollama 未连接";
@@ -392,7 +422,7 @@ elements.sidebarModel.addEventListener("change", async () => {
   elements.sidebarModel.disabled = true;
   elements.sidebarStatus.textContent = "正在切换模型…";
   try {
-    const response = await fetch("/api/model", {
+    const response = await apiFetch("/api/model", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model }),
@@ -430,7 +460,7 @@ elements.taskList.addEventListener("click", async event => {
     event.stopPropagation();
     if (running) return;
     state.tasks = state.tasks.filter(task => task.id !== deleteId);
-    try { await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: deleteId }) }); } catch (_) {}
+    try { await apiFetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: deleteId }) }); } catch (_) {}
     if (!state.tasks.length) state.tasks.push(newTask());
     if (state.activeId === deleteId) state.activeId = state.tasks[0].id;
     saveState();
@@ -464,4 +494,3 @@ document.addEventListener("keydown", event => {
 renderAll();
 fetchStatus();
 elements.input.focus();
-

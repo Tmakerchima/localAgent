@@ -8,6 +8,7 @@
 - Missing capabilities must produce a clear limitation instead of a fabricated workaround.
 - External side effects use two phases: prepare and preview first, then execute only after explicit confirmation.
 - Intermediate model commentary belongs in the activity panel; the conversation shows only the final answer.
+- Explicit capability-provisioning requests may install a small dependency only after checking whether it already exists; record package IDs and uninstall steps, and roll back packages installed by the failed attempt.
 
 ## Implementation
 
@@ -25,4 +26,3 @@ py -m unittest discover -s tests -v
 py -m py_compile agent.py web_server.py
 node --check web\app.js
 ```
-

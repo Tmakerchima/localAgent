@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import secrets
 import shutil
 import threading
 import urllib.error
@@ -35,10 +37,18 @@ class Session:
 
 
 class AppState:
-    def __init__(self, workspace: Path, config: dict[str, Any], allow_risky: bool):
+    def __init__(
+        self,
+        workspace: Path,
+        config: dict[str, Any],
+        allow_risky: bool,
+        allowed_origins: set[str] | None = None,
+    ):
         self.workspace = workspace
         self.config = dict(config)
         self.allow_risky = allow_risky
+        self.allowed_origins = allowed_origins or set()
+        self.pairing_token = secrets.token_urlsafe(24)
         self.sessions: dict[str, Session] = {}
         self.sessions_lock = threading.Lock()
         try:
@@ -48,12 +58,16 @@ class AppState:
         except (OSError, json.JSONDecodeError):
             pass
         self.model_warm_error = ""
+        self.model_warming = True
+        threading.Thread(target=self._warm_in_background, daemon=True).start()
+
+    def _warm_in_background(self) -> None:
         try:
             self.warm_model()
         except AgentError as exc:
-            # Keep the UI available when Ollama is still starting. A model
-            # switch or the first real request can retry after Ollama is up.
             self.model_warm_error = str(exc)
+        finally:
+            self.model_warming = False
 
     def warm_model(self) -> None:
         """Load the selected model with the same context used by real turns."""
@@ -128,8 +142,15 @@ class AppState:
                 session.cancel_event.set()
             self.config["model"] = model
             self.sessions.clear()
-        self.warm_model()
-        self.model_warm_error = ""
+        self.model_warming = True
+        try:
+            self.warm_model()
+            self.model_warm_error = ""
+        except AgentError as exc:
+            self.model_warm_error = str(exc)
+            raise
+        finally:
+            self.model_warming = False
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         temporary = SETTINGS_PATH.with_suffix(".tmp")
         temporary.write_text(json.dumps({"model": model}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -156,6 +177,34 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
             "style-src 'self'; script-src 'self'; frame-ancestors 'none'",
         )
+        origin = self.headers.get("Origin", "")
+        if origin and origin in self.app.allowed_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+            self.send_header("Vary", "Origin")
+
+    def cross_origin_authorized(self) -> bool:
+        origin = self.headers.get("Origin", "")
+        if not origin:
+            return True
+        if origin == f"http://{self.headers.get('Host', '')}":
+            return True
+        if origin not in self.app.allowed_origins:
+            return False
+        supplied = self.headers.get("X-Local-Agent-Token", "")
+        return bool(supplied) and hmac.compare_digest(supplied, self.app.pairing_token)
+
+    def do_OPTIONS(self) -> None:
+        origin = self.headers.get("Origin", "")
+        if not origin or origin not in self.app.allowed_origins:
+            self.send_json({"error": "Origin is not allowed"}, HTTPStatus.FORBIDDEN)
+            return
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Content-Length", "0")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Local-Agent-Token")
+        self.common_headers()
+        self.end_headers()
 
     def send_bytes(self, data: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
         self.send_response(status)
@@ -186,6 +235,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
+        if path.startswith("/api/") and not self.cross_origin_authorized():
+            self.send_json({"error": "Pairing required"}, HTTPStatus.UNAUTHORIZED)
+            return
         if path == "/api/status":
             self.handle_status()
             return
@@ -202,6 +254,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
+        if not self.cross_origin_authorized():
+            self.send_json({"error": "Pairing required"}, HTTPStatus.UNAUTHORIZED)
+            return
         try:
             payload = self.read_json()
             if path == "/api/chat":
@@ -252,8 +307,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 "model_loaded": loaded,
                 "model_context_length": loaded_context,
                 "model_warm_error": self.app.model_warm_error,
+                "model_warming": self.app.model_warming,
                 "installed_models": installed_models,
-                "workspace": str(self.app.workspace),
+                "project": self.app.workspace.name,
                 "context_length": self.app.config.get("context_length"),
                 "disk_free_gb": round(disk.free / (1024**3), 1),
                 "safe_mode": not self.app.allow_risky,
@@ -318,12 +374,36 @@ def validate_session_id(value: Any) -> str:
     return value
 
 
+def validate_https_origin(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value.rstrip("/"))
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise argparse.ArgumentTypeError(
+            "allowed origin must be an exact HTTPS origin such as https://agent.example"
+        )
+    return f"https://{parsed.netloc}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Local Build Agent web interface")
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--allow-risky", action="store_true")
+    parser.add_argument(
+        "--allowed-origin",
+        action="append",
+        type=validate_https_origin,
+        default=[],
+        help="Exact HTTPS frontend origin allowed to pair with this local companion",
+    )
     return parser.parse_args()
 
 
@@ -336,11 +416,15 @@ def main() -> int:
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         print("For safety, the web interface may only bind to a local loopback address.")
         return 2
-    app = AppState(workspace, load_json(ROOT / "config.json"), args.allow_risky)
+    allowed_origins = set(args.allowed_origin)
+    app = AppState(workspace, load_json(ROOT / "config.json"), args.allow_risky, allowed_origins)
     server = ThreadingHTTPServer((args.host, args.port), AgentWebHandler)
     server.app = app  # type: ignore[attr-defined]
     print(f"Local Build Agent UI: http://{args.host}:{args.port}")
     print(f"Workspace: {workspace}")
+    if allowed_origins:
+        print(f"Allowed frontend: {', '.join(sorted(allowed_origins))}")
+        print(f"Pairing token: {app.pairing_token}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

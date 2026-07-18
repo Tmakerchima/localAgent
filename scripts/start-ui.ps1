@@ -1,14 +1,31 @@
 param(
-    [string]$Workspace = (Get-Location).Path,
+    [string]$Workspace,
     [int]$Port = 8765,
     [switch]$AllowRisky,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [string]$AllowedOrigin
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $ollamaExe = Join-Path $projectRoot '.runtime\ollama\ollama.exe'
 $modelDir = Join-Path $projectRoot '.data\ollama\models'
+
+if ([string]::IsNullOrWhiteSpace($Workspace)) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = 'Choose the project folder for this Local Agent session.'
+    $dialog.SelectedPath = (Get-Location).Path
+    $dialog.ShowNewFolderButton = $false
+    if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+        throw 'No workspace folder was selected.'
+    }
+    $Workspace = $dialog.SelectedPath
+}
+$Workspace = [IO.Path]::GetFullPath($Workspace)
+if (-not (Test-Path -LiteralPath $Workspace -PathType Container)) {
+    throw "Workspace does not exist: $Workspace"
+}
 
 if (-not (Test-Path -LiteralPath $ollamaExe)) {
     throw 'Ollama is not installed for this project. Run .\scripts\setup.ps1 first.'
@@ -36,5 +53,7 @@ $url = "http://127.0.0.1:$Port"
 if (-not $NoBrowser) { Start-Process $url }
 $arguments = @((Join-Path $projectRoot 'web_server.py'), '--workspace', $Workspace, '--port', $Port)
 if ($AllowRisky) { $arguments += '--allow-risky' }
+if (-not [string]::IsNullOrWhiteSpace($AllowedOrigin)) {
+    $arguments += @('--allowed-origin', $AllowedOrigin.TrimEnd('/'))
+}
 & py @arguments
-

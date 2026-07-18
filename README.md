@@ -29,6 +29,9 @@
 .\scripts\start-ui.ps1
 ```
 
+未传 `-Workspace` 时会打开本机文件夹选择器；一个运行中的 Companion 只对应一个
+workspace。也可以显式使用 `-Workspace 'D:\path\to\project'`。
+
 脚本会打开 `http://127.0.0.1:8765`。关闭终端或按 `Ctrl+C` 可停止网页服务器。
 
 常用参数：
@@ -64,7 +67,7 @@ py .\agent.py --workspace . "检查项目并运行测试"
   独立的停止按钮会通知后端终止当前命令并清空待执行队列。
 - 右侧运行记录：默认收起，通过右侧边缘箭头展开或隐藏，实时展示工具名称、参数、结果、错误和机器状态。
 - 模式下拉框：Plan（只读规划）、Edits（允许编辑但不运行命令）、Auto（自动完成任务）。
-- 顶部状态：显示 workspace、本地模式、模型、上下文和磁盘余量。
+- 顶部状态：显示本地模式、模型、上下文和磁盘余量；项目路径不再展示在公网页面中。
 - 响应式布局：窄屏时任务列表与运行记录变为抽屉。
 - 每个任务在网页服务器内拥有独立模型上下文；网页服务器重启后，历史仍可见，
   但模型上下文会重新开始。
@@ -86,9 +89,11 @@ GROK-BUILD/
 ├─ scripts/
 │  ├─ setup.ps1             # 下载项目内 Ollama 与模型
 │  ├─ start.ps1             # 启动命令行 Agent
-│  └─ start-ui.ps1          # 启动 Ollama、网页服务并打开浏览器
+│  ├─ start-ui.ps1          # 选择一个项目并启动本地 Companion
+│  └─ rollback-desktop-tools.ps1 # 按安装记录回滚可选桌面工具
 ├─ tests/
-│  └─ test_agent.py         # 路径、写入、安全模式和事件流测试
+│  ├─ test_agent.py         # 路径、写入、安全模式和事件流测试
+│  └─ test_web_server.py    # 公网来源配对与后台预热测试
 ├─ .runtime/ollama/         # Ollama 独立运行时（不提交）
 └─ .data/ollama/models/     # 模型数据（不提交）
 ```
@@ -126,10 +131,20 @@ flowchart LR
   重复调用相同命令后，Agent 不会静默重跑，而会改用更窄的方法或明确报告失败。
 - 运行时能力注册表是事实来源：没有注册 OCR、桌面控制或 QQ 工具时，Agent 会明确报告
   能力缺失，不允许把计划描述成已完成操作。中间计划仅显示在运行记录中。
+- 当前可选桌面视觉工具使用 WinApp CLI 截图和 Tesseract OCR，只读取可见文字，不会点击、
+  输入或发送消息。安装记录可由 `scripts/rollback-desktop-tools.ps1` 预览和显式回滚。
 - 任意系统命令无法保证事务级回滚。文件写入采用原子替换；涉及发消息、发布内容、购买、
   删除个人数据或账号变更时，即使在 Auto 模式也必须先由用户确认最终动作。
 - 不要在含生产密钥的目录中运行，也不要以管理员身份启动。
 - `-AllowRisky` 会放宽命令拦截，只应在人工审查任务后使用。
+
+## 公网前端与本地 Companion
+
+朋友使用时应在他们自己的电脑运行 Companion、Ollama 和 workspace；Vercel 只托管静态
+前端，不代理本地文件或模型。完整架构、配对方式和部署命令见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+
+Companion 会先监听本地端口，再在后台预热模型。因此模型首次加载较慢时，网页仍可打开并
+显示“正在后台加载模型”，不会把加载阶段误报成 8765 无法连接。
 
 ## 存储与性能
 
@@ -189,4 +204,3 @@ py -m py_compile agent.py web_server.py
 - [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)：原生工具调用循环。
 - [Qwen 3.5 9B（Ollama）](https://ollama.com/library/qwen3.5%3A9b)：本项目默认模型。
 - [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：备用模型。
-

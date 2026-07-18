@@ -72,8 +72,9 @@ class WorkspaceToolTests(unittest.TestCase):
             "https://www.bilibili.com/",
         )
         self.assertIsNone(agent.requested_website("介绍一下 B站"))
-        self.assertIn("尚未安装 QQ", agent.requested_missing_capability("帮我在 QQ 给联系人发送消息"))
+        self.assertIn("尚未安装经过验证", agent.requested_missing_capability("帮我在 QQ 给联系人发送消息"))
         self.assertIsNone(agent.requested_missing_capability("帮我编写一个 QQ 自动化脚本"))
+        self.assertIsNone(agent.requested_missing_capability("先帮我安装并接入 OCR 能力"))
 
     def test_missing_capability_is_blocked_before_model_call(self):
         config = {"model": "test-model", "base_url": "http://127.0.0.1:11434"}
@@ -81,7 +82,7 @@ class WorkspaceToolTests(unittest.TestCase):
         local_agent.api_chat = lambda: self.fail("model must not be called for a missing capability")
         events = []
         result = local_agent.turn("用 OCR 在 QQ 找联系人并发送消息", on_event=events.append)
-        self.assertIn("尚未安装 QQ", result)
+        self.assertIn("尚未安装经过验证", result)
         self.assertEqual(events[-1]["type"], "assistant")
         self.assertTrue(events[-1]["final"])
 
@@ -160,4 +161,3 @@ class WorkspaceToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
