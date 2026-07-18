@@ -47,6 +47,43 @@ class AppState:
                 self.config["model"] = saved["model"]
         except (OSError, json.JSONDecodeError):
             pass
+        self.model_warm_error = ""
+        try:
+            self.warm_model()
+        except AgentError as exc:
+            # Keep the UI available when Ollama is still starting. A model
+            # switch or the first real request can retry after Ollama is up.
+            self.model_warm_error = str(exc)
+
+    def warm_model(self) -> None:
+        """Load the selected model with the same context used by real turns."""
+        payload = {
+            "model": self.config["model"],
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "stream": False,
+            "think": False,
+            "keep_alive": self.config.get("keep_alive", "30m"),
+            "options": {
+                "num_ctx": int(self.config.get("context_length", 8192)),
+                "num_predict": 1,
+            },
+        }
+        request = urllib.request.Request(
+            self.config["base_url"].rstrip("/") + "/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with LOCAL_OPENER.open(
+                request, timeout=int(self.config.get("model_timeout_seconds", 180))
+            ) as response:
+                response.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            raise AgentError(f"Unable to warm model (HTTP {exc.code}): {detail}") from exc
+        except (OSError, urllib.error.URLError) as exc:
+            raise AgentError(f"Unable to warm model: {exc}") from exc
 
     def get_session(self, session_id: str) -> Session:
         with self.sessions_lock:
@@ -87,8 +124,12 @@ class AppState:
         if model not in self.installed_models():
             raise AgentError("The selected model is not installed in local Ollama")
         with self.sessions_lock:
+            for session in self.sessions.values():
+                session.cancel_event.set()
             self.config["model"] = model
             self.sessions.clear()
+        self.warm_model()
+        self.model_warm_error = ""
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         temporary = SETTINGS_PATH.with_suffix(".tmp")
         temporary.write_text(json.dumps({"model": model}, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -187,6 +228,7 @@ class AgentWebHandler(BaseHTTPRequestHandler):
         model = self.app.config["model"]
         installed = False
         loaded = False
+        loaded_context = 0
         installed_models: list[str] = []
         try:
             base_url = self.app.config["base_url"].rstrip("/")
@@ -194,10 +236,11 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             installed = model in installed_models
             with LOCAL_OPENER.open(base_url + "/api/ps", timeout=3) as response:
                 running = json.loads(response.read().decode("utf-8"))
-            loaded = any(
-                item.get("name") == model or item.get("model") == model
-                for item in running.get("models", [])
-            )
+            for item in running.get("models", []):
+                if item.get("name") == model or item.get("model") == model:
+                    loaded_context = int(item.get("context_length") or 0)
+                    loaded = loaded_context >= int(self.app.config.get("context_length", 8192))
+                    break
         except (OSError, urllib.error.URLError, json.JSONDecodeError):
             pass
         disk = shutil.disk_usage(self.app.workspace.anchor)
@@ -207,6 +250,8 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 "model": model,
                 "model_installed": installed,
                 "model_loaded": loaded,
+                "model_context_length": loaded_context,
+                "model_warm_error": self.app.model_warm_error,
                 "installed_models": installed_models,
                 "workspace": str(self.app.workspace),
                 "context_length": self.app.config.get("context_length"),
