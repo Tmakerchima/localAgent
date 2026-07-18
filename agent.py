@@ -711,6 +711,7 @@ class LocalAgent:
         used_tool = False
         tool_nudges = 0
         output_continuations = 0
+        max_output_continuations = max(0, int(self.config.get("max_output_continuations", 2)))
         continuation_parts: list[str] = []
         seen_tool_calls: set[str] = set()
         for step in range(1, int(self.config.get("max_steps", 16)) + 1):
@@ -730,7 +731,7 @@ class LocalAgent:
 
             content = assistant_message["content"].strip()
             if not tool_calls:
-                if response.get("done_reason") == "length" and output_continuations < 1:
+                if response.get("done_reason") == "length" and output_continuations < max_output_continuations:
                     output_continuations += 1
                     if content:
                         continuation_parts.append(content)

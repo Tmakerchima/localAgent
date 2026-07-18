@@ -121,6 +121,24 @@ class WorkspaceToolTests(unittest.TestCase):
         result = local_agent.turn("解释架构")
         self.assertEqual(result, "第一部分\n\n第二部分")
 
+    def test_multiple_length_continuations_are_bounded(self):
+        config = {
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:11434",
+            "max_steps": 5,
+            "max_output_continuations": 2,
+        }
+        local_agent = agent.LocalAgent(self.workspace, config)
+        responses = iter(
+            [
+                {"done_reason": "length", "message": {"role": "assistant", "content": "一"}},
+                {"done_reason": "length", "message": {"role": "assistant", "content": "二"}},
+                {"done_reason": "stop", "message": {"role": "assistant", "content": "三"}},
+            ]
+        )
+        local_agent.api_chat = lambda: next(responses)
+        self.assertEqual(local_agent.turn("完整回答"), "一\n\n二\n\n三")
+
     def test_turn_emits_structured_tool_events(self):
         config = {
             "model": "test-model",
