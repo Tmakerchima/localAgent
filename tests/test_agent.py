@@ -72,6 +72,53 @@ class WorkspaceToolTests(unittest.TestCase):
             "https://www.bilibili.com/",
         )
         self.assertIsNone(agent.requested_website("介绍一下 B站"))
+        self.assertIn("尚未安装 QQ", agent.requested_missing_capability("帮我在 QQ 给联系人发送消息"))
+        self.assertIsNone(agent.requested_missing_capability("帮我编写一个 QQ 自动化脚本"))
+
+    def test_missing_capability_is_blocked_before_model_call(self):
+        config = {"model": "test-model", "base_url": "http://127.0.0.1:11434"}
+        local_agent = agent.LocalAgent(self.workspace, config)
+        local_agent.api_chat = lambda: self.fail("model must not be called for a missing capability")
+        events = []
+        result = local_agent.turn("用 OCR 在 QQ 找联系人并发送消息", on_event=events.append)
+        self.assertIn("尚未安装 QQ", result)
+        self.assertEqual(events[-1]["type"], "assistant")
+        self.assertTrue(events[-1]["final"])
+
+    def test_unverified_action_claim_is_rejected(self):
+        config = {
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:11434",
+            "max_steps": 4,
+        }
+        local_agent = agent.LocalAgent(self.workspace, config)
+        responses = iter(
+            [
+                {"message": {"role": "assistant", "content": "我会创建文件。"}},
+                {"message": {"role": "assistant", "content": "文件已经创建。"}},
+                {"message": {"role": "assistant", "content": "完成。"}},
+            ]
+        )
+        local_agent.api_chat = lambda: next(responses)
+        result = local_agent.turn("创建 note.txt")
+        self.assertIn("没有调用任何已注册工具", result)
+
+    def test_length_limited_answer_is_continued_and_merged(self):
+        config = {
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:11434",
+            "max_steps": 3,
+        }
+        local_agent = agent.LocalAgent(self.workspace, config)
+        responses = iter(
+            [
+                {"done_reason": "length", "message": {"role": "assistant", "content": "第一部分"}},
+                {"done_reason": "stop", "message": {"role": "assistant", "content": "第二部分"}},
+            ]
+        )
+        local_agent.api_chat = lambda: next(responses)
+        result = local_agent.turn("解释架构")
+        self.assertEqual(result, "第一部分\n\n第二部分")
 
     def test_turn_emits_structured_tool_events(self):
         config = {
@@ -113,3 +160,4 @@ class WorkspaceToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
