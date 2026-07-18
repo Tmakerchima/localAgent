@@ -7,6 +7,6 @@
   "keep_alive": "5m",
   "max_steps": 16,
   "command_timeout_seconds": 120,
+  "model_timeout_seconds": 180,
   "max_tool_output_chars": 16000
 }
-
