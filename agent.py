@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -132,7 +134,31 @@ RISKY_COMMANDS = [
 ]
 
 
-def run_command(workspace: Path, command: str, timeout: int, allow_risky: bool) -> str:
+def stop_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def run_command(
+    workspace: Path,
+    command: str,
+    timeout: int,
+    allow_risky: bool,
+    on_progress: Callable[[int], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> str:
     if not command.strip():
         raise AgentError("Command cannot be empty")
     if not allow_risky and any(re.search(pattern, command, re.IGNORECASE) for pattern in RISKY_COMMANDS):
@@ -141,18 +167,38 @@ def run_command(workspace: Path, command: str, timeout: int, allow_risky: bool) 
         argv = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command]
     else:
         argv = ["/bin/sh", "-lc", command]
-    completed = subprocess.run(
+    process = subprocess.Popen(
         argv,
         cwd=workspace,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=max(1, min(timeout, 900)),
-        check=False,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     )
-    combined = (completed.stdout + completed.stderr).strip()
-    return f"exit_code={completed.returncode}\n{combined}".rstrip()
+    hard_timeout = max(1, min(int(timeout), 900))
+    started = time.monotonic()
+    last_report = -1
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=1)
+            break
+        except subprocess.TimeoutExpired:
+            elapsed = int(time.monotonic() - started)
+            if cancel_event is not None and cancel_event.is_set():
+                stop_process_tree(process)
+                raise AgentError(f"Command cancelled by user after {elapsed}s")
+            if elapsed >= hard_timeout:
+                stop_process_tree(process)
+                raise AgentError(
+                    f"Command timed out after {hard_timeout}s. Try a narrower command or a different strategy."
+                )
+            if on_progress is not None and elapsed // 5 != last_report:
+                last_report = elapsed // 5
+                on_progress(elapsed)
+    combined = (stdout + stderr).strip()
+    return f"exit_code={process.returncode}\n{combined}".rstrip()
 
 
 def validate_web_url(url: str) -> str:
@@ -338,10 +384,15 @@ class LocalAgent:
             method="POST",
         )
         last_error: Exception | None = None
+        model_timeout = int(self.config.get("model_timeout_seconds", 180))
         for attempt in range(3):
             try:
-                with LOCAL_OPENER.open(request, timeout=1800) as response:
+                with LOCAL_OPENER.open(request, timeout=model_timeout) as response:
                     return json.loads(response.read().decode("utf-8"))
+            except (TimeoutError, socket.timeout) as exc:
+                raise AgentError(
+                    f"Model response timed out after {model_timeout}s. Stop, simplify the request, or try another model."
+                ) from exc
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 if exc.code not in {502, 503, 504} or attempt == 2:
@@ -352,6 +403,10 @@ class LocalAgent:
                 time.sleep(2 * (attempt + 1))
             except urllib.error.URLError as exc:
                 last_error = exc
+                if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                    raise AgentError(
+                        f"Model response timed out after {model_timeout}s. Stop, simplify the request, or try another model."
+                    ) from exc
                 if attempt == 2:
                     raise AgentError(
                         f"Cannot reach Ollama at {self.config['base_url']}. "
@@ -360,7 +415,13 @@ class LocalAgent:
                 time.sleep(2 * (attempt + 1))
         raise AgentError(f"Ollama request failed: {last_error}")
 
-    def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+    def execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        on_progress: Callable[[int], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         if self.mode == "plan" and name in {"write_file", "replace_in_file", "run_command", "open_url"}:
             return "ERROR: Plan mode is read-only; no files or commands were changed."
         if self.mode == "edits" and name in {"run_command", "open_url"}:
@@ -390,11 +451,15 @@ class LocalAgent:
                 arguments.get("replace_all", False),
             )
         elif name == "run_command":
+            configured_timeout = int(self.config.get("command_timeout_seconds", 120))
+            requested_timeout = int(arguments.get("timeout_seconds", configured_timeout))
             result = run_command(
                 self.workspace,
                 arguments["command"],
-                int(arguments.get("timeout_seconds", self.config.get("command_timeout_seconds", 120))),
+                min(requested_timeout, configured_timeout),
                 self.allow_risky or self.mode == "auto",
+                on_progress=on_progress,
+                cancel_event=cancel_event,
             )
         elif name == "open_url":
             result = open_url(arguments["url"], arguments.get("browser", "edge"))
@@ -405,7 +470,13 @@ class LocalAgent:
             result = result[:limit] + f"\n... truncated at {limit} characters"
         return result
 
-    def turn(self, user_text: str, mode: str = "auto", on_event: Callable[[dict[str, Any]], None] | None = None) -> str:
+    def turn(
+        self,
+        user_text: str,
+        mode: str = "auto",
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         if callable(mode) and on_event is None:
             on_event = mode
             mode = "auto"
@@ -471,7 +542,10 @@ class LocalAgent:
         needs_tool = any(term in user_text.lower() for term in action_terms)
         used_tool = False
         tool_nudges = 0
+        seen_tool_calls: set[str] = set()
         for step in range(1, int(self.config.get("max_steps", 16)) + 1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise AgentError("Task cancelled by user")
             emit({"type": "step", "step": step})
             response = self.api_chat()
             message = response.get("message", {})
@@ -509,10 +583,22 @@ class LocalAgent:
                 name = function.get("name", "")
                 arguments = function.get("arguments") or {}
                 emit({"type": "tool_start", "name": name, "arguments": arguments})
-                try:
-                    output = self.execute_tool(name, arguments)
-                except (AgentError, OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError) as exc:
-                    output = f"ERROR: {exc}"
+                signature = json.dumps([name, arguments], ensure_ascii=False, sort_keys=True)
+                if signature in seen_tool_calls:
+                    output = "ERROR: Identical repeated tool call blocked. Choose a narrower or different strategy."
+                else:
+                    seen_tool_calls.add(signature)
+                    try:
+                        output = self.execute_tool(
+                            name,
+                            arguments,
+                            on_progress=lambda elapsed, tool_name=name: emit(
+                                {"type": "tool_progress", "name": tool_name, "elapsed_seconds": elapsed}
+                            ),
+                            cancel_event=cancel_event,
+                        )
+                    except (AgentError, OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError) as exc:
+                        output = f"ERROR: {exc}"
                 emit({"type": "tool_result", "name": name, "output": output})
                 self.messages.append(
                     {
@@ -571,4 +657,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
