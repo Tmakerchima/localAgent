@@ -1,5 +1,7 @@
 import tempfile
 from pathlib import Path
+import threading
+import time
 import unittest
 
 import agent
@@ -31,6 +33,30 @@ class WorkspaceToolTests(unittest.TestCase):
     def test_safe_mode_blocks_destructive_command(self):
         with self.assertRaises(agent.AgentError):
             agent.run_command(self.workspace, "Remove-Item note.txt", 5, allow_risky=False)
+
+    def test_command_timeout_stops_process_tree(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(agent.AgentError, "timed out after 1s"):
+            agent.run_command(self.workspace, "Start-Sleep -Seconds 30", 1, allow_risky=True)
+        self.assertLess(time.monotonic() - started, 8)
+
+    def test_command_can_be_cancelled(self):
+        cancel_event = threading.Event()
+        timer = threading.Timer(0.25, cancel_event.set)
+        timer.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaisesRegex(agent.AgentError, "cancelled by user"):
+                agent.run_command(
+                    self.workspace,
+                    "Start-Sleep -Seconds 30",
+                    30,
+                    allow_risky=True,
+                    cancel_event=cancel_event,
+                )
+        finally:
+            timer.cancel()
+        self.assertLess(time.monotonic() - started, 8)
 
     def test_web_url_validation(self):
         self.assertEqual(agent.validate_web_url("https://www.bilibili.com"), "https://www.bilibili.com")
@@ -81,4 +107,3 @@ class WorkspaceToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
