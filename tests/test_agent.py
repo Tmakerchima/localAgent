@@ -204,6 +204,30 @@ class WorkspaceToolTests(unittest.TestCase):
             )
         )
 
+    def test_streaming_turn_emits_incremental_deltas(self):
+        config = {
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:11434",
+            "stream": True,
+        }
+        local_agent = agent.LocalAgent(self.workspace, config)
+        events = []
+
+        def fake_chat(include_tools=True, on_token=None):
+            self.assertTrue(include_tools)
+            self.assertIsNotNone(on_token)
+            on_token("流")
+            on_token("式")
+            return {"message": {"role": "assistant", "content": "流式回答"}, "done_reason": "stop"}
+
+        local_agent.api_chat = fake_chat
+        result = local_agent.turn("解释一下", on_event=events.append)
+        self.assertEqual(result, "流式回答")
+        self.assertEqual(
+            [event["content"] for event in events if event["type"] == "assistant_delta"],
+            ["流", "式"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

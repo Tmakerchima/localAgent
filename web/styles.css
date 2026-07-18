@@ -372,3 +372,5 @@ button, textarea, select { font-family: inherit; }
 .activity-event.error { border-color: #dfaaa4; }
 .activity-empty div { color: #bdb6aa; }
 .scrim.show { background: rgba(54, 49, 42, .2); }
+.streaming-cursor { display: inline-block; width: 6px; height: 1.05em; margin-left: 3px; background: currentColor; vertical-align: -.15em; animation: streaming-blink 1s step-end infinite; }
+@keyframes streaming-blink { 50% { opacity: 0; } }

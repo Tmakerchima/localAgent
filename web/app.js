@@ -122,10 +122,12 @@ function renderTasks() {
 function renderConversation() {
   const task = activeTask();
   elements.welcome.classList.toggle("hidden", task.messages.length > 0);
-  elements.messageList.innerHTML = task.messages.map(message => {
+  const messages = task.messages.map(message => {
     const label = message.role === "assistant" ? '<div class="message-label">Local Build Agent</div>' : "";
     return `<article class="message ${message.role}">${label}<div class="message-body">${renderMarkdown(message.content)}</div></article>`;
   }).join("");
+  const streaming = task.streamingContent ? `<article class="message assistant streaming"><div class="message-label">Local Build Agent</div><div class="message-body">${renderMarkdown(task.streamingContent)}<span class="streaming-cursor" aria-hidden="true"></span></div></article>` : "";
+  elements.messageList.innerHTML = messages + streaming;
   scrollToBottom(false);
 }
 
@@ -254,6 +256,8 @@ async function sendMessage(text) {
       addEvent({ title: "请求失败", detail: error.message, status: "error" });
     }
   } finally {
+    activeTask().streamingContent = "";
+    renderConversation();
     running = false;
     activeController = null;
     setRunning(false);
@@ -268,8 +272,14 @@ async function sendMessage(text) {
 function handleStreamEvent(event) {
   if (event.type === "step") {
     setRunPhase(`Agent 正在处理 · 第 ${event.step} 步`);
+  } else if (event.type === "assistant_delta") {
+    const task = activeTask();
+    task.streamingContent = (task.streamingContent || "") + (event.content || "");
+    renderConversation();
+    setRunPhase("Model generating response");
   } else if (event.type === "assistant" && event.content) {
     if (event.final) {
+      activeTask().streamingContent = "";
       addMessage("assistant", event.content);
     } else {
       addEvent({ key: "agent-progress", title: "Agent 进度", detail: event.content.slice(0, 1800), status: "running" });

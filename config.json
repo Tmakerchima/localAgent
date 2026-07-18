@@ -4,6 +4,7 @@
   "context_length": 8192,
   "max_output_tokens": 2048,
   "max_output_continuations": 2,
+  "stream": true,
   "think": false,
   "keep_alive": "30m",
   "max_steps": 24,

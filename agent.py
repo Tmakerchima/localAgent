@@ -513,12 +513,16 @@ class LocalAgent:
         "auto": "AUTO MODE: execute the task with full local command, application, browser, and filesystem reach. Destructive or credential actions still require an explicit user request.",
     }
 
-    def api_chat(self, include_tools: bool = True) -> dict[str, Any]:
+    def api_chat(
+        self,
+        include_tools: bool = True,
+        on_token: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         payload = {
             "model": self.config["model"],
             "messages": self.messages,
             "tools": TOOLS if include_tools else [],
-            "stream": False,
+            "stream": bool(on_token),
             "think": self.config.get("think", False),
             "keep_alive": self.config.get("keep_alive", "5m"),
             "options": {
@@ -537,7 +541,24 @@ class LocalAgent:
         for attempt in range(3):
             try:
                 with LOCAL_OPENER.open(request, timeout=model_timeout) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                    if on_token is None:
+                        return json.loads(response.read().decode("utf-8"))
+                    merged_message: dict[str, Any] = {"role": "assistant", "content": ""}
+                    done_reason = "stop"
+                    for raw_line in response:
+                        if not raw_line.strip():
+                            continue
+                        chunk = json.loads(raw_line.decode("utf-8"))
+                        message = chunk.get("message") or {}
+                        delta = message.get("content") or ""
+                        if delta:
+                            merged_message["content"] += delta
+                            on_token(delta)
+                        if message.get("tool_calls"):
+                            merged_message["tool_calls"] = message["tool_calls"]
+                        if chunk.get("done"):
+                            done_reason = chunk.get("done_reason") or done_reason
+                    return {"message": merged_message, "done_reason": done_reason}
             except (TimeoutError, socket.timeout) as exc:
                 raise AgentError(
                     f"Model response timed out after {model_timeout}s. Stop, simplify the request, or try another model."
@@ -718,7 +739,12 @@ class LocalAgent:
             if cancel_event is not None and cancel_event.is_set():
                 raise AgentError("Task cancelled by user")
             emit({"type": "step", "step": step})
-            response = self.api_chat()
+            token_callback = None
+            if self.config.get("stream", False):
+                token_callback = lambda token: emit({"type": "assistant_delta", "content": token})
+                response = self.api_chat(on_token=token_callback)
+            else:
+                response = self.api_chat()
             message = response.get("message", {})
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
@@ -828,7 +854,12 @@ class LocalAgent:
             }
         )
         try:
-            final_response = self.api_chat(include_tools=False)
+            token_callback = None
+            if self.config.get("stream", False):
+                token_callback = lambda token: emit({"type": "assistant_delta", "content": token})
+                final_response = self.api_chat(include_tools=False, on_token=token_callback)
+            else:
+                final_response = self.api_chat(include_tools=False)
             final_message = final_response.get("message", {})
             final_content = (final_message.get("content") or "").strip()
         except AgentError as exc:
