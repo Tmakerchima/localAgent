@@ -4,7 +4,7 @@
   "context_length": 8192,
   "max_output_tokens": 384,
   "think": false,
-  "keep_alive": "5m",
+  "keep_alive": "30m",
   "max_steps": 16,
   "command_timeout_seconds": 120,
   "model_timeout_seconds": 180,
