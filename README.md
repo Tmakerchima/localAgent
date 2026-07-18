@@ -76,6 +76,7 @@ GROK-BUILD/
 ├─ agent.py                 # Agent 循环、Ollama 客户端和本地工具层
 ├─ web_server.py            # 仅绑定本机的 HTTP/NDJSON 流式服务
 ├─ config.json              # 模型、上下文、输出与工具执行限制
+├─ AGENTS.md                # 项目级持久行为规则与验证约定
 ├─ prompts/
 │  └─ system.md             # 本地编码 Agent 行为规范
 ├─ web/
@@ -123,6 +124,8 @@ flowchart LR
   和启动应用。Plan 仍为只读，Edits 仍只允许工作区文件编辑。
 - 命令默认最多运行 120 秒，执行期间每约 5 秒向 UI 报告一次进度；用户停止、超时或
   重复调用相同命令后，Agent 不会静默重跑，而会改用更窄的方法或明确报告失败。
+- 运行时能力注册表是事实来源：没有注册 OCR、桌面控制或 QQ 工具时，Agent 会明确报告
+  能力缺失，不允许把计划描述成已完成操作。中间计划仅显示在运行记录中。
 - 任意系统命令无法保证事务级回滚。文件写入采用原子替换；涉及发消息、发布内容、购买、
   删除个人数据或账号变更时，即使在 Auto 模式也必须先由用户确认最终动作。
 - 不要在含生产密钥的目录中运行，也不要以管理员身份启动。
@@ -155,7 +158,7 @@ Get-ChildItem .runtime,.data -Recurse -File |
 `config.json` 中的主要选项：
 
 - `context_length`：默认 8192。提高到 16384/32768 会增加内存与显存压力。
-- `max_output_tokens`：默认 384，减少 8GB 显存环境下工具步骤之间的冗长等待。
+- `max_output_tokens`：默认 1024，避免中文长回答在句子中间被截断。
 - `think`：默认 `false`；复杂任务可临时启用隐藏推理。
 - `keep_alive`：模型在内存中的保留时间，默认 30 分钟，减少频繁重新加载。
 - `max_steps`：单次任务允许的最大工具循环数。
@@ -186,3 +189,4 @@ py -m py_compile agent.py web_server.py
 - [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)：原生工具调用循环。
 - [Qwen 3.5 9B（Ollama）](https://ollama.com/library/qwen3.5%3A9b)：本项目默认模型。
 - [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：备用模型。
+
