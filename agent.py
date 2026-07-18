@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parent
 IGNORED_DIRS = {".data", ".runtime", ".local-agent", ".git", "__pycache__", "node_modules"}
+LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class AgentError(RuntimeError):
@@ -231,7 +232,6 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
-
 class LocalAgent:
     def __init__(self, workspace: Path, config: dict[str, Any], allow_risky: bool = False):
         self.workspace = workspace.resolve()
@@ -270,7 +270,7 @@ class LocalAgent:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                with urllib.request.urlopen(request, timeout=1800) as response:
+                with LOCAL_OPENER.open(request, timeout=1800) as response:
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 last_error = exc
@@ -353,7 +353,23 @@ class LocalAgent:
                 output = event["output"]
                 print(output[:1000] + ("\n..." if len(output) > 1000 else ""), flush=True)
 
-        self.messages.append({"role": "user", "content": f"[{self.MODE_DIRECTIVES[self.mode]}]\n\n{user_text}"})
+        execution_hint = ""
+        lowered_request = user_text.lower()
+        if self.mode == "auto" and any(term in lowered_request for term in ("test", "测试")):
+            execution_hint = (
+                "\n\nMandatory first action: call run_command with the project's documented test command. "
+                "Do not inspect unrelated files before running the tests."
+            )
+        self.messages.append(
+            {
+                "role": "user",
+                "content": f"[{self.MODE_DIRECTIVES[self.mode]}]\n\nCurrent objective: {user_text}{execution_hint}",
+            }
+        )
+        action_terms = ("test", "run", "check", "inspect", "edit", "fix", "测试", "运行", "检查", "诊断", "修复", "修改", "读取")
+        needs_tool = any(term in user_text.lower() for term in action_terms)
+        used_tool = False
+        tool_nudges = 0
         for step in range(1, int(self.config.get("max_steps", 16)) + 1):
             emit({"type": "step", "step": step})
             response = self.api_chat()
@@ -371,9 +387,23 @@ class LocalAgent:
             if content:
                 emit({"type": "assistant", "content": content, "final": not tool_calls})
             if not tool_calls:
+                if needs_tool and not used_tool and tool_nudges < 2:
+                    tool_nudges += 1
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "You have not executed any tool, so you may not claim the task is verified. "
+                                "Call a declared native tool now using the runtime's required tool-call format, "
+                                "with a valid tool name and only valid schema arguments."
+                            ),
+                        }
+                    )
+                    continue
                 return content
 
             for call in tool_calls:
+                used_tool = True
                 function = call.get("function", {})
                 name = function.get("name", "")
                 arguments = function.get("arguments") or {}
@@ -383,7 +413,13 @@ class LocalAgent:
                 except (AgentError, OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError) as exc:
                     output = f"ERROR: {exc}"
                 emit({"type": "tool_result", "name": name, "output": output})
-                self.messages.append({"role": "tool", "tool_name": name, "content": output})
+                self.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_name": name,
+                        "content": f"{output}\n\n[Current objective: {user_text}. Continue this objective; do not ask for a new task.]",
+                    }
+                )
         raise AgentError("Maximum tool-step limit reached; start a new turn with a narrower request")
 
 
