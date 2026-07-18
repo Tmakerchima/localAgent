@@ -32,6 +32,10 @@ const elements = {
 
 let state = loadState();
 let running = false;
+let activeController = null;
+let runTimer = null;
+let runStartedAt = 0;
+let runPhase = "Agent 正在处理";
 
 function makeId() {
   return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9-]/g, "");
@@ -179,6 +183,7 @@ async function sendMessage(text) {
   if (running || !text.trim()) return;
   const task = activeTask();
   running = true;
+  activeController = new AbortController();
   addMessage("user", text.trim());
   elements.input.value = "";
   resizeInput();
@@ -189,6 +194,7 @@ async function sendMessage(text) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: task.id, message: text.trim(), mode: task.mode || "auto" }),
+      signal: activeController.signal,
     });
     if (!response.ok || !response.body) throw new Error(`请求失败 (${response.status})`);
     const reader = response.body.getReader();
@@ -204,10 +210,16 @@ async function sendMessage(text) {
     }
     if (buffer.trim()) handleStreamEvent(JSON.parse(buffer));
   } catch (error) {
-    addMessage("assistant", `连接本地 Agent 时出错：${error.message}`);
-    addEvent({ title: "请求失败", detail: error.message, status: "error" });
+    if (error.name === "AbortError") {
+      addMessage("assistant", "任务已由用户停止。");
+      addEvent({ title: "任务已停止", detail: "已中断本次浏览器请求", status: "done" });
+    } else {
+      addMessage("assistant", `连接本地 Agent 时出错：${error.message}`);
+      addEvent({ title: "请求失败", detail: error.message, status: "error" });
+    }
   } finally {
     running = false;
+    activeController = null;
     setRunning(false);
     fetchStatus();
   }
@@ -215,13 +227,13 @@ async function sendMessage(text) {
 
 function handleStreamEvent(event) {
   if (event.type === "step") {
-    elements.thinkingLabel.textContent = `Agent 正在处理 · 第 ${event.step} 步`;
+    setRunPhase(`Agent 正在处理 · 第 ${event.step} 步`);
   } else if (event.type === "assistant" && event.content) {
     addMessage("assistant", event.content);
   } else if (event.type === "tool_start") {
     const detail = Object.keys(event.arguments || {}).length ? JSON.stringify(event.arguments, null, 2) : "等待结果…";
     addEvent({ key: event.name, title: event.name, detail, status: "running" });
-    elements.thinkingLabel.textContent = `正在运行 ${event.name}`;
+    setRunPhase(`正在运行 ${event.name}`);
   } else if (event.type === "tool_result") {
     updateLatestEvent(event.name, { detail: event.output.slice(0, 1800), status: event.output.startsWith("ERROR:") ? "error" : "done" });
   } else if (event.type === "error") {
@@ -231,11 +243,31 @@ function handleStreamEvent(event) {
 }
 
 function setRunning(isRunning, label = "Agent 正在思考") {
-  elements.send.disabled = isRunning;
   elements.input.disabled = isRunning;
   elements.thinking.classList.toggle("hidden", !isRunning);
-  elements.thinkingLabel.textContent = label;
-  if (isRunning) scrollToBottom();
+  elements.send.textContent = isRunning ? "■" : "↑";
+  elements.send.setAttribute("aria-label", isRunning ? "停止任务" : "发送任务");
+  elements.send.title = isRunning ? "停止当前任务" : "发送任务";
+  elements.send.classList.toggle("stop", isRunning);
+  if (runTimer) clearInterval(runTimer);
+  runTimer = null;
+  if (isRunning) {
+    runStartedAt = Date.now();
+    runPhase = label;
+    updateRunLabel();
+    runTimer = setInterval(updateRunLabel, 1000);
+    scrollToBottom();
+  }
+}
+
+function setRunPhase(label) {
+  runPhase = label;
+  updateRunLabel();
+}
+
+function updateRunLabel() {
+  const seconds = Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000));
+  elements.thinkingLabel.textContent = `${runPhase} · ${seconds}s`;
 }
 
 function scrollToBottom(smooth = true) {
@@ -255,7 +287,7 @@ async function fetchStatus() {
     elements.statusModel.textContent = status.model.split("/").pop().split(":")[0];
     elements.statusContext.textContent = `${Math.round(status.context_length / 1024)}K`;
     elements.statusDisk.textContent = `${status.disk_free_gb} GB`;
-    elements.sidebarModel.textContent = "Qwythos 9B · Q4_K_M";
+    elements.sidebarModel.textContent = status.model === "qwen3.5:9b" ? "Qwen 3.5 · 9B" : status.model.split("/").pop();
     elements.sidebarStatus.textContent = status.model_loaded ? "模型已加载" : status.model_installed ? "已安装 · 等待任务" : "模型未安装";
     elements.sidebarStatusDot.classList.toggle("offline", !status.model_installed);
   } catch (_) {
@@ -272,6 +304,10 @@ function closeOverlays() {
 
 elements.form.addEventListener("submit", event => {
   event.preventDefault();
+  if (running) {
+    activeController?.abort();
+    return;
+  }
   sendMessage(elements.input.value);
 });
 elements.modeSelect.addEventListener("change", () => {
