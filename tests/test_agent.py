@@ -32,6 +32,21 @@ class WorkspaceToolTests(unittest.TestCase):
         with self.assertRaises(agent.AgentError):
             agent.run_command(self.workspace, "Remove-Item note.txt", 5, allow_risky=False)
 
+    def test_web_url_validation(self):
+        self.assertEqual(agent.validate_web_url("https://www.bilibili.com"), "https://www.bilibili.com")
+        with self.assertRaises(agent.AgentError):
+            agent.validate_web_url("file:///C:/Windows/System32")
+        with self.assertRaises(agent.AgentError):
+            agent.validate_web_url("https://user:secret@example.com")
+
+    def test_runtime_intent_detection(self):
+        self.assertTrue(agent.asks_for_active_model("现在是什么模型？"))
+        self.assertEqual(
+            agent.requested_website("请用 Edge 打开 B站登录页面"),
+            "https://www.bilibili.com/",
+        )
+        self.assertIsNone(agent.requested_website("介绍一下 B站"))
+
     def test_turn_emits_structured_tool_events(self):
         config = {
             "model": "test-model",
