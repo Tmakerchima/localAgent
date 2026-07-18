@@ -120,7 +120,7 @@ function updateModeHint() {
   elements.modeHint.textContent = {
     plan: "Plan：只读分析，不会修改文件",
     edits: "Edits：允许编辑文件，不运行命令",
-    auto: "Auto：读取、编辑与工具调用",
+    auto: "Auto：系统命令、应用与浏览器",
   }[mode];
 }
 
