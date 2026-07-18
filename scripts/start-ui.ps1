@@ -16,6 +16,7 @@ if (-not (Test-Path -LiteralPath $ollamaExe)) {
 
 $env:OLLAMA_MODELS = $modelDir
 $env:OLLAMA_HOST = '127.0.0.1:11434'
+$env:OLLAMA_FLASH_ATTENTION = '1'
 try {
     Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 | Out-Null
 } catch {
@@ -36,5 +37,4 @@ if (-not $NoBrowser) { Start-Process $url }
 $arguments = @((Join-Path $projectRoot 'web_server.py'), '--workspace', $Workspace, '--port', $Port)
 if ($AllowRisky) { $arguments += '--allow-risky' }
 & py @arguments
-
 
