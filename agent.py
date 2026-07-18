@@ -395,10 +395,19 @@ class LocalAgent:
                 ) from exc
             except urllib.error.HTTPError as exc:
                 last_error = exc
+                try:
+                    error_body = exc.read().decode("utf-8", errors="replace").strip()
+                except OSError:
+                    error_body = ""
                 if exc.code not in {502, 503, 504} or attempt == 2:
+                    detail = error_body
+                    try:
+                        detail = json.loads(error_body).get("error", error_body)
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
                     raise AgentError(
-                        f"Ollama returned HTTP {exc.code}. It may still be loading the model; "
-                        "wait a minute and retry."
+                        f"Ollama returned HTTP {exc.code}"
+                        + (f": {detail}" if detail else ".")
                     ) from exc
                 time.sleep(2 * (attempt + 1))
             except urllib.error.URLError as exc:
@@ -607,6 +616,20 @@ class LocalAgent:
                         "content": f"{output}\n\n[Current objective: {user_text}. Continue this objective; do not ask for a new task.]",
                     }
                 )
+            # Some GGUF chat templates (including Qwythos on recent Ollama)
+            # require an explicit user turn after tool results. Without this,
+            # Ollama fails while rendering the template with HTTP 400:
+            # "No user query found in messages."
+            self.messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Continue the current objective: {user_text}. Use the tool results above. "
+                        "Do not repeat an identical failed call; either take the next concrete step "
+                        "or give the final evidence-based answer."
+                    ),
+                }
+            )
         raise AgentError("Maximum tool-step limit reached; start a new turn with a narrower request")
 
 
