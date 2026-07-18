@@ -139,6 +139,34 @@ class WorkspaceToolTests(unittest.TestCase):
         local_agent.api_chat = lambda: next(responses)
         self.assertEqual(local_agent.turn("完整回答"), "一\n\n二\n\n三")
 
+    def test_tool_limit_requests_a_no_tool_final_summary(self):
+        config = {
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:11434",
+            "max_steps": 1,
+        }
+        local_agent = agent.LocalAgent(self.workspace, config)
+        calls = []
+
+        def fake_chat(include_tools=True):
+            calls.append(include_tools)
+            if include_tools:
+                return {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {"function": {"name": "inspect_workspace", "arguments": {}}}
+                        ],
+                    }
+                }
+            return {"message": {"role": "assistant", "content": "已根据已读取证据总结。"}}
+
+        local_agent.api_chat = fake_chat
+        result = local_agent.turn("阅读项目结构")
+        self.assertEqual(result, "已根据已读取证据总结。")
+        self.assertEqual(calls, [True, False])
+
     def test_turn_emits_structured_tool_events(self):
         config = {
             "model": "test-model",

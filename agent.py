@@ -513,11 +513,11 @@ class LocalAgent:
         "auto": "AUTO MODE: execute the task with full local command, application, browser, and filesystem reach. Destructive or credential actions still require an explicit user request.",
     }
 
-    def api_chat(self) -> dict[str, Any]:
+    def api_chat(self, include_tools: bool = True) -> dict[str, Any]:
         payload = {
             "model": self.config["model"],
             "messages": self.messages,
-            "tools": TOOLS,
+            "tools": TOOLS if include_tools else [],
             "stream": False,
             "think": self.config.get("think", False),
             "keep_alive": self.config.get("keep_alive", "5m"),
@@ -817,7 +817,29 @@ class LocalAgent:
                     ),
                 }
             )
-        raise AgentError("Maximum tool-step limit reached; start a new turn with a narrower request")
+        self.messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "The tool-step budget has been reached. Do not call any more tools. "
+                    "Using only the evidence already collected in this conversation, provide the final answer now. "
+                    "State clearly what was inspected and what remains uncertain."
+                ),
+            }
+        )
+        try:
+            final_response = self.api_chat(include_tools=False)
+            final_message = final_response.get("message", {})
+            final_content = (final_message.get("content") or "").strip()
+        except AgentError as exc:
+            raise AgentError(
+                f"Tool-step limit reached and final summary failed: {exc}"
+            ) from exc
+        if not final_content:
+            raise AgentError("Tool-step limit reached; the model returned no final summary")
+        self.messages.append({"role": "assistant", "content": final_content})
+        emit({"type": "assistant", "content": final_content, "final": True})
+        return final_content
 
 
 def parse_args() -> argparse.Namespace:

@@ -6,7 +6,7 @@
   "max_output_continuations": 2,
   "think": false,
   "keep_alive": "30m",
-  "max_steps": 16,
+  "max_steps": 24,
   "command_timeout_seconds": 120,
   "model_timeout_seconds": 180,
   "max_tool_output_chars": 16000
