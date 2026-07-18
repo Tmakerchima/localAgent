@@ -352,8 +352,17 @@ function formatModelName(model) {
 
 function closeOverlays() {
   elements.taskSidebar.classList.remove("open");
-  elements.activityPanel.classList.remove("open");
+  setActivityOpen(false);
   elements.scrim.classList.remove("show");
+}
+
+function setActivityOpen(open) {
+  elements.activityPanel.classList.toggle("open", open);
+  document.body.classList.toggle("activity-open", open);
+  elements.activityToggle.textContent = open ? "›" : "‹";
+  elements.activityToggle.setAttribute("aria-expanded", String(open));
+  elements.activityToggle.setAttribute("aria-label", open ? "隐藏运行记录" : "显示运行记录");
+  elements.activityToggle.title = open ? "隐藏运行记录" : "显示运行记录";
 }
 
 elements.form.addEventListener("submit", event => {
@@ -434,7 +443,7 @@ document.querySelectorAll("[data-prompt]").forEach(button => button.addEventList
   elements.input.focus();
 }));
 elements.sidebarToggle.addEventListener("click", () => { elements.taskSidebar.classList.add("open"); elements.scrim.classList.add("show"); });
-elements.activityToggle.addEventListener("click", () => { elements.activityPanel.classList.add("open"); elements.scrim.classList.add("show"); });
+elements.activityToggle.addEventListener("click", () => setActivityOpen(!elements.activityPanel.classList.contains("open")));
 elements.closeActivity.addEventListener("click", closeOverlays);
 elements.scrim.addEventListener("click", closeOverlays);
 document.addEventListener("keydown", event => {
