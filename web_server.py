@@ -28,6 +28,7 @@ STATIC_FILES = {
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
 SETTINGS_PATH = ROOT / ".local-agent" / "settings.json"
+WORKSPACES_PATH = ROOT / ".local-agent" / "workspaces.json"
 
 
 class Session:
@@ -51,6 +52,15 @@ class AppState:
         self.allowed_origins = allowed_origins or set()
         self.pairing_token = secrets.token_urlsafe(24)
         self.workspace_choices: dict[str, Path] = {"default": self.workspace}
+        try:
+            saved_workspaces = load_json(WORKSPACES_PATH)
+            for workspace_id, saved_path in saved_workspaces.items():
+                if workspace_id != "default" and isinstance(saved_path, str):
+                    candidate = Path(saved_path).resolve()
+                    if candidate.is_dir():
+                        self.workspace_choices[workspace_id] = candidate
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
         self.sessions: dict[str, Session] = {}
         self.sessions_lock = threading.Lock()
         try:
@@ -113,6 +123,13 @@ class AppState:
                     self.workspace_choices.pop(old_id)
                     if len(self.workspace_choices) <= 48:
                         break
+        WORKSPACES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = WORKSPACES_PATH.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({key: str(value) for key, value in self.workspace_choices.items()}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(WORKSPACES_PATH)
         return {"workspace_id": workspace_id, "project": workspace.name}
 
     def resolve_workspace(self, workspace_id: Any = None) -> Path:

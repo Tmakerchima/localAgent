@@ -26,16 +26,25 @@ class StartupTests(unittest.TestCase):
     @mock.patch("web_server.threading.Thread")
     def test_sessions_bind_to_selected_workspace(self, thread_class):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            state = web_server.AppState(
-                Path(first),
-                {"model": "test:latest", "base_url": "http://127.0.0.1:11434"},
-                False,
-            )
-            selected = state.register_workspace(Path(second))
-            session = state.get_session("task-two", selected["workspace_id"])
-            self.assertEqual(session.agent.workspace, Path(second).resolve())
-            with self.assertRaises(web_server.AgentError):
-                state.get_session("missing", "expired-workspace")
+            with mock.patch.object(web_server, "WORKSPACES_PATH", Path(first) / "workspaces.json"):
+                state = web_server.AppState(
+                    Path(first),
+                    {"model": "test:latest", "base_url": "http://127.0.0.1:11434"},
+                    False,
+                )
+                selected = state.register_workspace(Path(second))
+                session = state.get_session("task-two", selected["workspace_id"])
+                self.assertEqual(session.agent.workspace, Path(second).resolve())
+                reloaded = web_server.AppState(
+                    Path(first),
+                    {"model": "test:latest", "base_url": "http://127.0.0.1:11434"},
+                    False,
+                )
+                self.assertEqual(
+                    reloaded.resolve_workspace(selected["workspace_id"]), Path(second).resolve()
+                )
+                with self.assertRaises(web_server.AgentError):
+                    state.get_session("missing", "expired-workspace")
 
 
 class PairingAuthorizationTests(unittest.TestCase):
