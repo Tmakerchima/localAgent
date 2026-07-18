@@ -31,6 +31,7 @@ class Session:
     def __init__(self, workspace: Path, config: dict[str, Any], allow_risky: bool):
         self.agent = LocalAgent(workspace, config, allow_risky)
         self.lock = threading.Lock()
+        self.cancel_event = threading.Event()
 
 
 class AppState:
@@ -59,7 +60,17 @@ class AppState:
 
     def reset_session(self, session_id: str) -> None:
         with self.sessions_lock:
-            self.sessions.pop(session_id, None)
+            session = self.sessions.pop(session_id, None)
+            if session is not None:
+                session.cancel_event.set()
+
+    def cancel_session(self, session_id: str) -> bool:
+        with self.sessions_lock:
+            session = self.sessions.get(session_id)
+            if session is None:
+                return False
+            session.cancel_event.set()
+            return True
 
     def installed_models(self) -> list[str]:
         base_url = self.config["base_url"].rstrip("/")
@@ -164,6 +175,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 session_id = validate_session_id(payload.get("session_id"))
                 self.app.reset_session(session_id)
                 self.send_json({"ok": True})
+            elif path == "/api/cancel":
+                session_id = validate_session_id(payload.get("session_id"))
+                self.send_json({"ok": True, "cancelled": self.app.cancel_session(session_id)})
             else:
                 self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except AgentError as exc:
@@ -233,10 +247,16 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             emit({"type": "done"})
             return
         try:
+            session.cancel_event.clear()
             mode = payload.get("mode", "auto")
             if mode not in {"plan", "edits", "auto"}:
                 raise AgentError("mode must be plan, edits, or auto")
-            final_text = session.agent.turn(message.strip(), mode=mode, on_event=emit)
+            final_text = session.agent.turn(
+                message.strip(),
+                mode=mode,
+                on_event=emit,
+                cancel_event=session.cancel_event,
+            )
             emit({"type": "done", "content": final_text})
         except Exception as exc:  # Keep an agent failure contained to its stream.
             emit({"type": "error", "message": str(exc)})
@@ -287,4 +307,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
