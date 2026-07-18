@@ -252,6 +252,30 @@ def requested_website(text: str) -> str | None:
     return None
 
 
+ACTION_TERMS = (
+    "test", "run", "check", "inspect", "edit", "fix", "open", "browser", "website",
+    "create", "write", "copy", "move", "send", "ocr", "automation", "powershell", "script",
+    "测试", "运行", "检查", "诊断", "修复", "修改", "读取", "打开", "浏览器", "网站",
+    "创建", "新建", "写入", "复制", "移动", "发送", "联系人", "自动化", "脚本",
+)
+
+
+def requested_missing_capability(text: str) -> str | None:
+    """Return a deterministic explanation for actions the runtime cannot perform."""
+    lowered = text.lower()
+    if re.search(r"(?:编写|写一个|创建|新建|开发).{0,12}(?:脚本|工具|代码|项目)", lowered):
+        return None
+    qq_terms = ("qq", "腾讯qq")
+    qq_actions = ("联系人", "发送", "消息", "点击", "输入", "ocr", "自动化", "contact", "send")
+    if any(term in lowered for term in qq_terms) and any(term in lowered for term in qq_actions):
+        return (
+            "当前运行时尚未安装 QQ 桌面自动化能力，因此不能识别联系人、点击 QQ 控件或发送消息。"
+            "现有工具只能读写工作区文件、运行 PowerShell 和在 Edge 中打开网页。"
+            "需要先接入截图/OCR 或 Windows UI Automation，并使用“准备草稿→用户确认→发送”的两阶段工具。"
+        )
+    return None
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -345,16 +369,33 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+AVAILABLE_CAPABILITIES = (
+    "inspect workspace files; read, create, and replace UTF-8 files inside the workspace; "
+    "run PowerShell commands in Auto mode; open HTTP(S) pages in Microsoft Edge"
+)
+UNAVAILABLE_CAPABILITIES = (
+    "screen capture, OCR, mouse clicks, keyboard injection, generic Windows UI automation, "
+    "QQ contact lookup, and QQ message sending"
+)
+
 class LocalAgent:
     def __init__(self, workspace: Path, config: dict[str, Any], allow_risky: bool = False):
         self.workspace = workspace.resolve()
         self.config = config
         self.allow_risky = allow_risky
         system_prompt = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8")
+        guidance = ""
+        guidance_path = self.workspace / "AGENTS.md"
+        if guidance_path.is_file():
+            guidance = guidance_path.read_text(encoding="utf-8", errors="replace")[:16000]
         context = (
             f"\n\nRuntime context:\n- Workspace: {self.workspace}\n- Platform: {sys.platform}"
-            f"\n- Active model: {self.config['model']}\n"
+            f"\n- Active model: {self.config['model']}"
+            f"\n- Available capabilities: {AVAILABLE_CAPABILITIES}"
+            f"\n- Unavailable capabilities: {UNAVAILABLE_CAPABILITIES}\n"
         )
+        if guidance:
+            context += f"\nWorkspace AGENTS.md instructions:\n{guidance}\n"
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt + context}]
         self.mode = "auto"
 
@@ -513,6 +554,15 @@ class LocalAgent:
             emit({"type": "assistant", "content": content, "final": True})
             return content
 
+        missing_capability = requested_missing_capability(user_text)
+        if missing_capability:
+            self.messages.extend(
+                [{"role": "user", "content": user_text}, {"role": "assistant", "content": missing_capability}]
+            )
+            emit({"type": "capability_error", "content": missing_capability})
+            emit({"type": "assistant", "content": missing_capability, "final": True})
+            return missing_capability
+
         website = requested_website(user_text)
         if website and self.mode == "auto":
             emit({"type": "step", "step": 1})
@@ -547,10 +597,11 @@ class LocalAgent:
                 "content": f"[{self.MODE_DIRECTIVES[self.mode]}]\n\nCurrent objective: {user_text}{execution_hint}",
             }
         )
-        action_terms = ("test", "run", "check", "inspect", "edit", "fix", "open", "browser", "website", "测试", "运行", "检查", "诊断", "修复", "修改", "读取", "打开", "浏览器", "网站")
-        needs_tool = any(term in user_text.lower() for term in action_terms)
+        needs_tool = any(term in user_text.lower() for term in ACTION_TERMS)
         used_tool = False
         tool_nudges = 0
+        output_continuations = 0
+        continuation_parts: list[str] = []
         seen_tool_calls: set[str] = set()
         for step in range(1, int(self.config.get("max_steps", 16)) + 1):
             if cancel_event is not None and cancel_event.is_set():
@@ -568,11 +619,26 @@ class LocalAgent:
             self.messages.append(assistant_message)
 
             content = assistant_message["content"].strip()
-            if content:
-                emit({"type": "assistant", "content": content, "final": not tool_calls})
             if not tool_calls:
+                if response.get("done_reason") == "length" and output_continuations < 1:
+                    output_continuations += 1
+                    if content:
+                        continuation_parts.append(content)
+                        emit({"type": "assistant", "content": content, "final": False})
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response was cut off by the output limit. Continue exactly "
+                                "where it stopped, finish the answer concisely, and do not repeat earlier text."
+                            ),
+                        }
+                    )
+                    continue
                 if needs_tool and not used_tool and tool_nudges < 2:
                     tool_nudges += 1
+                    if content:
+                        emit({"type": "assistant", "content": content, "final": False})
                     self.messages.append(
                         {
                             "role": "user",
@@ -584,7 +650,17 @@ class LocalAgent:
                         }
                     )
                     continue
-                return content
+                if needs_tool and not used_tool:
+                    content = (
+                        "我无法验证或执行这个操作：模型没有调用任何已注册工具。"
+                        "请检查运行记录，或先为该能力安装并注册对应工具。"
+                    )
+                final_content = "\n\n".join(part for part in [*continuation_parts, content] if part)
+                emit({"type": "assistant", "content": final_content, "final": True})
+                return final_content
+
+            if content:
+                emit({"type": "assistant", "content": content, "final": False})
 
             for call in tool_calls:
                 used_tool = True
@@ -680,3 +756,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
