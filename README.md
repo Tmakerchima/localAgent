@@ -60,6 +60,8 @@ py .\agent.py --workspace . "检查项目并运行测试"
 - 左下角模型选择器：自动列出 Ollama 中全部本地模型；切换后重置服务端对话上下文，
   并把选择保存在忽略提交的 `.local-agent/settings.json`。
 - 中间对话区：支持 Markdown、代码块、快捷建议、Enter 发送和 Shift+Enter 换行。
+- 任务运行时输入框仍可用：再次发送会把新指令加入队列，并在当前任务结束后自动执行；
+  独立的停止按钮会通知后端终止当前命令并清空待执行队列。
 - 右侧运行记录：实时展示工具名称、参数、结果、错误和机器状态。
 - 模式下拉框：Plan（只读规划）、Edits（允许编辑但不运行命令）、Auto（自动完成任务）。
 - 顶部状态：显示 workspace、本地模式、模型、上下文和磁盘余量。
@@ -119,6 +121,10 @@ flowchart LR
 - 默认阻止删除、磁盘操作、强制 Git 操作和网络下载类命令。
 - `run_command` 默认从 workspace 启动；Auto 模式可访问工作区外路径、运行系统命令
   和启动应用。Plan 仍为只读，Edits 仍只允许工作区文件编辑。
+- 命令默认最多运行 120 秒，执行期间每约 5 秒向 UI 报告一次进度；用户停止、超时或
+  重复调用相同命令后，Agent 不会静默重跑，而会改用更窄的方法或明确报告失败。
+- 任意系统命令无法保证事务级回滚。文件写入采用原子替换；涉及发消息、发布内容、购买、
+  删除个人数据或账号变更时，即使在 Auto 模式也必须先由用户确认最终动作。
 - 不要在含生产密钥的目录中运行，也不要以管理员身份启动。
 - `-AllowRisky` 会放宽命令拦截，只应在人工审查任务后使用。
 
@@ -154,6 +160,7 @@ Get-ChildItem .runtime,.data -Recurse -File |
 - `keep_alive`：模型在内存中的保留时间。
 - `max_steps`：单次任务允许的最大工具循环数。
 - `command_timeout_seconds`：命令执行超时。
+- `model_timeout_seconds`：等待 Ollama 单次模型响应的最长时间。
 - `max_tool_output_chars`：返回给模型的单次工具输出上限。
 
 ## 验证
@@ -179,4 +186,3 @@ py -m py_compile agent.py web_server.py
 - [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)：原生工具调用循环。
 - [Qwen 3.5 9B（Ollama）](https://ollama.com/library/qwen3.5%3A9b)：本项目默认模型。
 - [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：备用模型。
-
