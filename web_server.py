@@ -24,6 +24,7 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
+SETTINGS_PATH = ROOT / ".local-agent" / "settings.json"
 
 
 class Session:
@@ -35,10 +36,16 @@ class Session:
 class AppState:
     def __init__(self, workspace: Path, config: dict[str, Any], allow_risky: bool):
         self.workspace = workspace
-        self.config = config
+        self.config = dict(config)
         self.allow_risky = allow_risky
         self.sessions: dict[str, Session] = {}
         self.sessions_lock = threading.Lock()
+        try:
+            saved = load_json(SETTINGS_PATH)
+            if isinstance(saved.get("model"), str):
+                self.config["model"] = saved["model"]
+        except (OSError, json.JSONDecodeError):
+            pass
 
     def get_session(self, session_id: str) -> Session:
         with self.sessions_lock:
@@ -53,6 +60,28 @@ class AppState:
     def reset_session(self, session_id: str) -> None:
         with self.sessions_lock:
             self.sessions.pop(session_id, None)
+
+    def installed_models(self) -> list[str]:
+        base_url = self.config["base_url"].rstrip("/")
+        with LOCAL_OPENER.open(base_url + "/api/tags", timeout=5) as response:
+            tags = json.loads(response.read().decode("utf-8"))
+        names = {
+            item.get("name") or item.get("model")
+            for item in tags.get("models", [])
+            if item.get("name") or item.get("model")
+        }
+        return sorted(names, key=str.casefold)
+
+    def switch_model(self, model: str) -> None:
+        if model not in self.installed_models():
+            raise AgentError("The selected model is not installed in local Ollama")
+        with self.sessions_lock:
+            self.config["model"] = model
+            self.sessions.clear()
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = SETTINGS_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"model": model}, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(SETTINGS_PATH)
 
 
 class AgentWebHandler(BaseHTTPRequestHandler):
@@ -125,6 +154,12 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             payload = self.read_json()
             if path == "/api/chat":
                 self.handle_chat(payload)
+            elif path == "/api/model":
+                model = payload.get("model")
+                if not isinstance(model, str) or not model.strip():
+                    raise AgentError("model is required")
+                self.app.switch_model(model.strip())
+                self.send_json({"ok": True, "model": self.app.config["model"]})
             elif path == "/api/reset":
                 session_id = validate_session_id(payload.get("session_id"))
                 self.app.reset_session(session_id)
@@ -138,14 +173,11 @@ class AgentWebHandler(BaseHTTPRequestHandler):
         model = self.app.config["model"]
         installed = False
         loaded = False
+        installed_models: list[str] = []
         try:
             base_url = self.app.config["base_url"].rstrip("/")
-            with LOCAL_OPENER.open(base_url + "/api/tags", timeout=3) as response:
-                tags = json.loads(response.read().decode("utf-8"))
-            installed = any(
-                item.get("name") == model or item.get("model") == model
-                for item in tags.get("models", [])
-            )
+            installed_models = self.app.installed_models()
+            installed = model in installed_models
             with LOCAL_OPENER.open(base_url + "/api/ps", timeout=3) as response:
                 running = json.loads(response.read().decode("utf-8"))
             loaded = any(
@@ -161,6 +193,7 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 "model": model,
                 "model_installed": installed,
                 "model_loaded": loaded,
+                "installed_models": installed_models,
                 "workspace": str(self.app.workspace),
                 "context_length": self.app.config.get("context_length"),
                 "disk_free_gb": round(disk.free / (1024**3), 1),
