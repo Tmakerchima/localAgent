@@ -337,10 +337,12 @@ button, textarea, select { font-family: inherit; }
 .safe-chip { border-color: #dfc9bc; color: #a6573e; background: #fff6f0; }
 .send-button { background: var(--accent); color: #fff; }
 .send-button.stop { background: #4b4943; font-size: 11px; }
+.composer-actions { display: flex; align-items: center; gap: 7px; }
+.stop-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid #d6d0c5; border-radius: 10px; background: #4b4943; color: #fff; cursor: pointer; font-size: 10px; }
+.stop-button:hover { background: #35332f; }
 .privacy-note { color: var(--faint); }
 .machine-card, .activity-event { border-color: var(--line); background: #fbfaf6; }
 .activity-event.running { border-color: #d8b29f; }
 .activity-event.error { border-color: #dfaaa4; }
 .activity-empty div { color: #bdb6aa; }
 .scrim.show { background: rgba(54, 49, 42, .2); }
-
