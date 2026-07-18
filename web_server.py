@@ -7,6 +7,7 @@ import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
 import shutil
@@ -49,6 +50,7 @@ class AppState:
         self.allow_risky = allow_risky
         self.allowed_origins = allowed_origins or set()
         self.pairing_token = secrets.token_urlsafe(24)
+        self.workspace_choices: dict[str, Path] = {"default": self.workspace}
         self.sessions: dict[str, Session] = {}
         self.sessions_lock = threading.Lock()
         try:
@@ -99,14 +101,60 @@ class AppState:
         except (OSError, urllib.error.URLError) as exc:
             raise AgentError(f"Unable to warm model: {exc}") from exc
 
-    def get_session(self, session_id: str) -> Session:
+    def register_workspace(self, workspace: Path) -> dict[str, str]:
+        workspace = workspace.resolve()
+        if not workspace.is_dir():
+            raise AgentError(f"Workspace does not exist: {workspace}")
+        workspace_id = secrets.token_urlsafe(18)
+        self.workspace_choices[workspace_id] = workspace
+        if len(self.workspace_choices) > 64:
+            for old_id in list(self.workspace_choices):
+                if old_id != "default":
+                    self.workspace_choices.pop(old_id)
+                    if len(self.workspace_choices) <= 48:
+                        break
+        return {"workspace_id": workspace_id, "project": workspace.name}
+
+    def resolve_workspace(self, workspace_id: Any = None) -> Path:
+        if workspace_id is None or workspace_id == "default":
+            return self.workspace
+        if not isinstance(workspace_id, str) or workspace_id not in self.workspace_choices:
+            raise AgentError("This task workspace is no longer available; choose it again")
+        return self.workspace_choices[workspace_id]
+
+    def pick_workspace(self) -> dict[str, str]:
+        if os.name != "nt":
+            raise AgentError("Workspace picker is currently supported on Windows only")
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected = filedialog.askdirectory(
+                parent=root,
+                initialdir=str(self.workspace),
+                title="Choose a workspace for this new task",
+            )
+            root.destroy()
+        except Exception as exc:
+            raise AgentError(f"Unable to open workspace picker: {exc}") from exc
+        if not selected:
+            raise AgentError("No workspace was selected")
+        return self.register_workspace(Path(selected))
+
+    def get_session(self, session_id: str, workspace_id: Any = None) -> Session:
+        workspace = self.resolve_workspace(workspace_id)
         with self.sessions_lock:
             session = self.sessions.get(session_id)
             if session is None:
                 if len(self.sessions) >= 32:
                     self.sessions.pop(next(iter(self.sessions)))
-                session = Session(self.workspace, self.config, self.allow_risky)
+                session = Session(workspace, self.config, self.allow_risky)
                 self.sessions[session_id] = session
+            elif session.agent.workspace != workspace:
+                raise AgentError("A task cannot change workspace after it has started")
             return session
 
     def reset_session(self, session_id: str) -> None:
@@ -239,7 +287,10 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Pairing required"}, HTTPStatus.UNAUTHORIZED)
             return
         if path == "/api/status":
-            self.handle_status()
+            try:
+                self.handle_status()
+            except AgentError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         static = STATIC_FILES.get(path)
         if static is None:
@@ -259,7 +310,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = self.read_json()
-            if path == "/api/chat":
+            if path == "/api/workspace/pick":
+                self.send_json(self.app.pick_workspace())
+            elif path == "/api/chat":
                 self.handle_chat(payload)
             elif path == "/api/model":
                 model = payload.get("model")
@@ -298,7 +351,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                     break
         except (OSError, urllib.error.URLError, json.JSONDecodeError):
             pass
-        disk = shutil.disk_usage(self.app.workspace.anchor)
+        workspace_id = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("workspace_id", ["default"])[0]
+        workspace = self.app.resolve_workspace(workspace_id)
+        disk = shutil.disk_usage(workspace.anchor)
         self.send_json(
             {
                 "ok": True,
@@ -309,7 +364,7 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 "model_warm_error": self.app.model_warm_error,
                 "model_warming": self.app.model_warming,
                 "installed_models": installed_models,
-                "project": self.app.workspace.name,
+                "project": workspace.name,
                 "context_length": self.app.config.get("context_length"),
                 "disk_free_gb": round(disk.free / (1024**3), 1),
                 "safe_mode": not self.app.allow_risky,
@@ -324,7 +379,7 @@ class AgentWebHandler(BaseHTTPRequestHandler):
         if len(message) > 32000:
             raise AgentError("message is too long")
 
-        session = self.app.get_session(session_id)
+        session = self.app.get_session(session_id, payload.get("workspace_id"))
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
         self.send_header("Connection", "close")

@@ -2,6 +2,7 @@ import types
 import unittest
 from email.message import Message
 from pathlib import Path
+import tempfile
 from unittest import mock
 
 import web_server
@@ -21,6 +22,20 @@ class StartupTests(unittest.TestCase):
             target=state._warm_in_background, daemon=True
         )
         thread_class.return_value.start.assert_called_once_with()
+
+    @mock.patch("web_server.threading.Thread")
+    def test_sessions_bind_to_selected_workspace(self, thread_class):
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            state = web_server.AppState(
+                Path(first),
+                {"model": "test:latest", "base_url": "http://127.0.0.1:11434"},
+                False,
+            )
+            selected = state.register_workspace(Path(second))
+            session = state.get_session("task-two", selected["workspace_id"])
+            self.assertEqual(session.agent.workspace, Path(second).resolve())
+            with self.assertRaises(web_server.AgentError):
+                state.get_session("missing", "expired-workspace")
 
 
 class PairingAuthorizationTests(unittest.TestCase):

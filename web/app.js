@@ -67,8 +67,17 @@ function makeId() {
   return (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9-]/g, "");
 }
 
-function newTask() {
-  return { id: makeId(), title: "新任务", createdAt: Date.now(), messages: [], events: [], mode: "auto" };
+function newTask(workspace = { workspace_id: "default", project: "当前项目" }) {
+  return {
+    id: makeId(),
+    title: "新任务",
+    createdAt: Date.now(),
+    messages: [],
+    events: [],
+    mode: "auto",
+    workspaceId: workspace.workspace_id || "default",
+    workspaceName: workspace.project || "当前项目",
+  };
 }
 
 function loadState() {
@@ -105,7 +114,7 @@ function renderTasks() {
     item.type = "button";
     item.className = `task-item${task.id === state.activeId ? " active" : ""}`;
     item.dataset.id = task.id;
-    item.innerHTML = `<strong>${escapeHtml(task.title)}</strong><small>${shortTime(task.createdAt)}</small><span class="task-delete" data-delete="${task.id}" aria-label="删除任务">×</span>`;
+    item.innerHTML = `<strong>${escapeHtml(task.title)}</strong><small>${shortTime(task.createdAt)} · ${escapeHtml(task.workspaceName || "当前项目")}</small><span class="task-delete" data-delete="${task.id}" aria-label="删除任务">×</span>`;
     elements.taskList.append(item);
   });
 }
@@ -220,7 +229,7 @@ async function sendMessage(text) {
     const response = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: task.id, message: text.trim(), mode: task.mode || "auto" }),
+      body: JSON.stringify({ session_id: task.id, message: text.trim(), mode: task.mode || "auto", workspace_id: task.workspaceId || "default" }),
       signal: activeController.signal,
     });
     if (!response.ok || !response.body) throw new Error(`请求失败 (${response.status})`);
@@ -350,8 +359,10 @@ function resizeInput() {
 
 async function fetchStatus() {
   try {
-    const response = await apiFetch("/api/status");
+    const workspaceId = activeTask().workspaceId || "default";
+    const response = await apiFetch(`/api/status?workspace_id=${encodeURIComponent(workspaceId)}`);
     const status = await response.json();
+    if (!response.ok) throw new Error(status.error || `状态读取失败 (${response.status})`);
     elements.statusModel.textContent = status.model.split("/").pop().split(":")[0];
     elements.statusContext.textContent = `${Math.round(status.context_length / 1024)}K`;
     elements.statusDisk.textContent = `${status.disk_free_gb} GB`;
@@ -380,6 +391,17 @@ async function fetchStatus() {
     elements.sidebarStatus.textContent = "Ollama 未连接";
     elements.sidebarStatusDot.classList.add("offline");
   }
+}
+
+async function chooseWorkspace() {
+  const response = await apiFetch("/api/workspace/pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `选择 workspace 失败 (${response.status})`);
+  return result;
 }
 
 function formatModelName(model) {
@@ -444,15 +466,20 @@ elements.input.addEventListener("keydown", event => {
     elements.form.requestSubmit();
   }
 });
-elements.newTask.addEventListener("click", () => {
+elements.newTask.addEventListener("click", async () => {
   if (running) return;
-  const task = newTask();
-  state.tasks.unshift(task);
-  state.activeId = task.id;
-  saveState();
-  renderAll();
-  closeOverlays();
-  elements.input.focus();
+  try {
+    const workspace = await chooseWorkspace();
+    const task = newTask(workspace);
+    state.tasks.unshift(task);
+    state.activeId = task.id;
+    saveState();
+    renderAll();
+    closeOverlays();
+    elements.input.focus();
+  } catch (error) {
+    addEvent({ title: "未创建新任务", detail: error.message, status: "error" });
+  }
 });
 elements.taskList.addEventListener("click", async event => {
   const deleteId = event.target.dataset.delete;

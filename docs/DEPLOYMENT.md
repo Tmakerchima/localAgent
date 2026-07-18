@@ -31,7 +31,7 @@ and [Vercel static build output documentation](https://vercel.com/docs/builds).
 
 ## Local companion startup
 
-Each user chooses one workspace when starting the companion:
+Each user starts the companion with a default workspace:
 
 ```powershell
 .\scripts\start-ui.ps1 `
@@ -42,7 +42,9 @@ Each user chooses one workspace when starting the companion:
 
 If `-Workspace` is omitted, the script opens a native folder picker. The
 terminal prints a one-time pairing token. The public frontend asks for that
-token on its first connection and stores it only in that browser.
+token on its first connection and stores it only in that browser. Clicking
+“New Task” then opens the local folder picker again; each task receives its own
+workspace binding and session.
 The companion starts listening before model warmup completes, so a cold model
 is reported as loading instead of making the frontend appear disconnected.
 
@@ -58,7 +60,8 @@ visitor's loopback companion.
 - Keep the companion bound to `127.0.0.1`; never bind it to `0.0.0.0`.
 - Allow only the exact production Vercel origin, not `*`.
 - Every user runs their own model and downloads their own model files.
-- One companion process owns one explicitly selected workspace.
+- The companion owns a default workspace and a bounded task-to-workspace map;
+  each task is isolated to the directory selected when it was created.
 - Do not enable Auto mode for untrusted shared machines without an additional
   command approval policy and OS sandbox.
 - Vercel never receives local workspace contents in this architecture.
