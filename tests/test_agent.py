@@ -103,6 +103,12 @@ class WorkspaceToolTests(unittest.TestCase):
             [event["type"] for event in events],
             ["step", "tool_start", "tool_result", "step", "assistant"],
         )
+        self.assertTrue(
+            any(
+                message.get("role") == "user" and "Use the tool results above" in message.get("content", "")
+                for message in local_agent.messages
+            )
+        )
 
 
 if __name__ == "__main__":
