@@ -95,7 +95,10 @@
                 <span class="safe-chip" id="modeHint">Auto：读取、编辑与工具调用</span>
                 <span>Enter 发送 · Shift Enter 换行</span>
               </div>
-              <button class="send-button" id="sendButton" type="submit" aria-label="发送任务" title="发送任务">↑</button>
+              <div class="composer-actions">
+                <button class="stop-button hidden" id="stopButton" type="button" aria-label="停止当前任务" title="停止当前任务">■</button>
+                <button class="send-button" id="sendButton" type="submit" aria-label="发送任务" title="发送或追加指令">↑</button>
+              </div>
             </div>
           </form>
           <p class="privacy-note">仅连接 127.0.0.1 · 文件操作限制在当前 workspace</p>
@@ -126,4 +129,3 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
-
