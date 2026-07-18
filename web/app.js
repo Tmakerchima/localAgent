@@ -244,6 +244,7 @@ function handleStreamEvent(event) {
 
 function setRunning(isRunning, label = "Agent 正在思考") {
   elements.input.disabled = isRunning;
+  elements.sidebarModel.disabled = isRunning;
   elements.thinking.classList.toggle("hidden", !isRunning);
   elements.send.textContent = isRunning ? "■" : "↑";
   elements.send.setAttribute("aria-label", isRunning ? "停止任务" : "发送任务");
@@ -287,13 +288,28 @@ async function fetchStatus() {
     elements.statusModel.textContent = status.model.split("/").pop().split(":")[0];
     elements.statusContext.textContent = `${Math.round(status.context_length / 1024)}K`;
     elements.statusDisk.textContent = `${status.disk_free_gb} GB`;
-    elements.sidebarModel.textContent = status.model === "qwen3.5:9b" ? "Qwen 3.5 · 9B" : status.model.split("/").pop();
+    const models = status.installed_models || [];
+    const currentOptions = [...elements.sidebarModel.options].map(option => option.value);
+    if (JSON.stringify(currentOptions) !== JSON.stringify(models)) {
+      elements.sidebarModel.replaceChildren(...models.map(model => {
+        const option = document.createElement("option");
+        option.value = model;
+        option.textContent = formatModelName(model);
+        return option;
+      }));
+    }
+    elements.sidebarModel.value = status.model;
     elements.sidebarStatus.textContent = status.model_loaded ? "模型已加载" : status.model_installed ? "已安装 · 等待任务" : "模型未安装";
     elements.sidebarStatusDot.classList.toggle("offline", !status.model_installed);
   } catch (_) {
     elements.sidebarStatus.textContent = "Ollama 未连接";
     elements.sidebarStatusDot.classList.add("offline");
   }
+}
+
+function formatModelName(model) {
+  if (model === "qwen3.5:9b") return "Qwen 3.5 · 9B";
+  return model.replace(/^hf\.co\//, "").split("/").pop();
 }
 
 function closeOverlays() {
@@ -314,6 +330,27 @@ elements.modeSelect.addEventListener("change", () => {
   activeTask().mode = elements.modeSelect.value;
   saveState();
   updateModeHint();
+});
+elements.sidebarModel.addEventListener("change", async () => {
+  if (running) return;
+  const model = elements.sidebarModel.value;
+  elements.sidebarModel.disabled = true;
+  elements.sidebarStatus.textContent = "正在切换模型…";
+  try {
+    const response = await fetch("/api/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `切换失败 (${response.status})`);
+    addEvent({ title: "模型已切换", detail: `${formatModelName(model)} · 对话上下文已重置`, status: "done" });
+  } catch (error) {
+    addEvent({ title: "模型切换失败", detail: error.message, status: "error" });
+  } finally {
+    elements.sidebarModel.disabled = false;
+    fetchStatus();
+  }
 });
 elements.input.addEventListener("input", resizeInput);
 elements.input.addEventListener("keydown", event => {
