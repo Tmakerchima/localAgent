@@ -237,7 +237,14 @@ function handleStreamEvent(event) {
   if (event.type === "step") {
     setRunPhase(`Agent 正在处理 · 第 ${event.step} 步`);
   } else if (event.type === "assistant" && event.content) {
-    addMessage("assistant", event.content);
+    if (event.final) {
+      addMessage("assistant", event.content);
+    } else {
+      addEvent({ key: "agent-progress", title: "Agent 进度", detail: event.content.slice(0, 1800), status: "running" });
+      setRunPhase("Agent 正在规划下一步");
+    }
+  } else if (event.type === "capability_error") {
+    addEvent({ title: "能力不可用", detail: event.content, status: "error" });
   } else if (event.type === "tool_start") {
     const detail = Object.keys(event.arguments || {}).length ? JSON.stringify(event.arguments, null, 2) : "等待结果…";
     addEvent({ key: event.name, title: event.name, detail, status: "running" });
@@ -457,3 +464,4 @@ document.addEventListener("keydown", event => {
 renderAll();
 fetchStatus();
 elements.input.focus();
+
