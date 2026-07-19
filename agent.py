@@ -487,11 +487,17 @@ class LocalAgent:
         self.allow_risky = allow_risky
         system_prompt = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8")
         guidance_parts: list[str] = []
-        for guidance_name in ("AGENTS.md", "AGENT.md"):
-            guidance_path = self.workspace / guidance_name
+        guidance_paths = [ROOT / "AGENT.md", self.workspace / "AGENTS.md", self.workspace / "AGENT.md"]
+        seen_guidance: set[Path] = set()
+        for guidance_path in guidance_paths:
+            guidance_path = guidance_path.resolve()
+            if guidance_path in seen_guidance:
+                continue
+            seen_guidance.add(guidance_path)
             if guidance_path.is_file():
                 guidance_parts.append(
-                    f"## {guidance_name}\n{guidance_path.read_text(encoding='utf-8', errors='replace')[:12000]}"
+                    f"## {guidance_path.name} ({guidance_path.parent})\n"
+                    f"{guidance_path.read_text(encoding='utf-8', errors='replace')[:12000]}"
                 )
         guidance = "\n\n".join(guidance_parts)
         available_capabilities = BASE_CAPABILITIES
