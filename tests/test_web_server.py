@@ -1,5 +1,6 @@
 import types
 import unittest
+import json
 from email.message import Message
 from pathlib import Path
 import tempfile
@@ -22,6 +23,25 @@ class StartupTests(unittest.TestCase):
             target=state._warm_in_background, daemon=True
         )
         thread_class.return_value.start.assert_called_once_with()
+
+    @mock.patch("web_server.LOCAL_OPENER.open")
+    @mock.patch("web_server.threading.Thread")
+    def test_release_model_requests_zero_keep_alive(self, thread_class, open_mock):
+        state = web_server.AppState(
+            Path.cwd(),
+            {"model": "test:latest", "base_url": "http://127.0.0.1:11434"},
+            False,
+        )
+        state.config["model"] = "test:latest"
+        response = mock.MagicMock()
+        response.read.return_value = b'{"done_reason":"unload"}'
+        open_mock.return_value.__enter__.return_value = response
+        state.release_model()
+        request = open_mock.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/generate")
+        self.assertEqual(payload["keep_alive"], 0)
+        self.assertEqual(payload["model"], "test:latest")
 
     @mock.patch("web_server.threading.Thread")
     def test_sessions_bind_to_selected_workspace(self, thread_class):

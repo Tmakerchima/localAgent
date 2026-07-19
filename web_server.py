@@ -111,6 +111,25 @@ class AppState:
         except (OSError, urllib.error.URLError) as exc:
             raise AgentError(f"Unable to warm model: {exc}") from exc
 
+    def release_model(self) -> None:
+        """Ask Ollama to unload the active model and release its llama-server."""
+        payload = {
+            "model": self.config["model"],
+            "prompt": "",
+            "keep_alive": 0,
+        }
+        request = urllib.request.Request(
+            self.config["base_url"].rstrip("/") + "/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with LOCAL_OPENER.open(request, timeout=15) as response:
+                response.read()
+        except (OSError, urllib.error.URLError) as exc:
+            raise AgentError(f"Unable to unload model: {exc}") from exc
+
     def register_workspace(self, workspace: Path) -> dict[str, str]:
         workspace = workspace.resolve()
         if not workspace.is_dir():
@@ -344,6 +363,9 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             elif path == "/api/cancel":
                 session_id = validate_session_id(payload.get("session_id"))
                 self.send_json({"ok": True, "cancelled": self.app.cancel_session(session_id)})
+            elif path == "/api/release":
+                self.app.release_model()
+                self.send_json({"ok": True, "released": True})
             else:
                 self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except AgentError as exc:

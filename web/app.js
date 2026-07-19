@@ -528,6 +528,23 @@ document.addEventListener("keydown", event => {
   if (event.key === "Escape") closeOverlays();
 });
 
+let releaseSent = false;
+window.addEventListener("pagehide", () => {
+  if (releaseSent) return;
+  releaseSent = true;
+  const headers = { "Content-Type": "application/json" };
+  if (!IS_LOCAL_UI) {
+    const token = localStorage.getItem(PAIRING_TOKEN_KEY);
+    if (token) headers["X-Local-Agent-Token"] = token;
+  }
+  fetch(`${API_BASE}/api/release`, {
+    method: "POST",
+    headers,
+    body: "{}",
+    keepalive: true,
+  }).catch(() => {});
+});
+
 renderAll();
 fetchStatus();
 elements.input.focus();
