@@ -486,10 +486,14 @@ class LocalAgent:
         self.config = config
         self.allow_risky = allow_risky
         system_prompt = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8")
-        guidance = ""
-        guidance_path = self.workspace / "AGENTS.md"
-        if guidance_path.is_file():
-            guidance = guidance_path.read_text(encoding="utf-8", errors="replace")[:16000]
+        guidance_parts: list[str] = []
+        for guidance_name in ("AGENTS.md", "AGENT.md"):
+            guidance_path = self.workspace / guidance_name
+            if guidance_path.is_file():
+                guidance_parts.append(
+                    f"## {guidance_name}\n{guidance_path.read_text(encoding='utf-8', errors='replace')[:12000]}"
+                )
+        guidance = "\n\n".join(guidance_parts)
         available_capabilities = BASE_CAPABILITIES
         unavailable_capabilities = "mouse clicks, keyboard injection, and QQ message sending"
         if desktop_vision_available():
@@ -503,7 +507,7 @@ class LocalAgent:
             f"\n- Unavailable capabilities: {unavailable_capabilities}\n"
         )
         if guidance:
-            context += f"\nWorkspace AGENTS.md instructions:\n{guidance}\n"
+            context += f"\nWorkspace guidance files:\n{guidance}\n"
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt + context}]
         self.mode = "auto"
 

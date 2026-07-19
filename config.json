@@ -1,7 +1,7 @@
 {
   "model": "qwen3.5:9b",
   "base_url": "http://127.0.0.1:11434",
-  "context_length": 8192,
+  "context_length": 12288,
   "max_output_tokens": 2048,
   "max_output_continuations": 2,
   "stream": true,

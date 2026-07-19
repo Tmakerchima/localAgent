@@ -207,3 +207,14 @@ py -m py_compile agent.py web_server.py
 - [Ollama 工具调用](https://docs.ollama.com/capabilities/tool-calling)：原生工具调用循环。
 - [Qwen 3.5 9B（Ollama）](https://ollama.com/library/qwen3.5%3A9b)：本项目默认模型。
 - [Qwythos 9B GGUF](https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF)：备用模型。
+# 最近运行配置
+
+当前 `context_length` 已调整为 `12288`，可容纳更多源码和对话上下文；如果显存不足或响应明显变慢，可在 `config.json` 降回 `8192`。
+
+根目录一键启动 Ollama、模型预热、Companion 后端和浏览器界面：
+
+```powershell
+.\start.ps1 -Workspace 'D:\path\to\your\project'
+```
+
+运行时会同时读取工作区中的 `AGENTS.md`（安全与开发约束）和 `AGENT.md`（用户偏好与执行风格）。
