@@ -745,6 +745,7 @@ class LocalAgent:
         max_output_continuations = max(0, int(self.config.get("max_output_continuations", 2)))
         continuation_parts: list[str] = []
         seen_tool_calls: set[str] = set()
+        tool_failures = 0
         for step in range(1, int(self.config.get("max_steps", 16)) + 1):
             if cancel_event is not None and cancel_event.is_set():
                 raise AgentError("Task cancelled by user")
@@ -832,6 +833,10 @@ class LocalAgent:
                     except (AgentError, OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError) as exc:
                         output = f"ERROR: {exc}"
                 emit({"type": "tool_result", "name": name, "output": output})
+                if output.startswith("ERROR:"):
+                    tool_failures += 1
+                else:
+                    tool_failures = 0
                 self.messages.append(
                     {
                         "role": "tool",
@@ -853,6 +858,27 @@ class LocalAgent:
                     ),
                 }
             )
+            if tool_failures >= 2:
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Multiple tool attempts have failed. Change strategy or narrow the request now; "
+                            "do not repeat failed arguments. If no declared tool can complete the objective, "
+                            "stop and explain the exact limitation using the observed errors."
+                        ),
+                    }
+                )
+            elif step % 4 == 0:
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Progress checkpoint: briefly track the objective, confirmed evidence, and the next "
+                            "concrete step internally before continuing. Keep the response concise."
+                        ),
+                    }
+                )
         self.messages.append(
             {
                 "role": "user",

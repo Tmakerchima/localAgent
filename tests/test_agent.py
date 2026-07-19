@@ -228,6 +228,33 @@ class WorkspaceToolTests(unittest.TestCase):
             ["流", "式"],
         )
 
+    def test_repeated_tool_failures_request_strategy_change(self):
+        config = {
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:11434",
+            "max_steps": 3,
+        }
+        local_agent = agent.LocalAgent(self.workspace, config)
+        calls = []
+
+        def fake_chat(include_tools=True):
+            calls.append(include_tools)
+            if not include_tools:
+                return {"message": {"role": "assistant", "content": "已报告失败证据"}}
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "inspect_workspace", "arguments": {}}}],
+                }
+            }
+
+        local_agent.api_chat = fake_chat
+        local_agent.execute_tool = lambda *args, **kwargs: "ERROR: test failure"
+        result = local_agent.turn("检查项目", on_event=lambda event: None)
+        self.assertEqual(result, "已报告失败证据")
+        self.assertTrue(any("Multiple tool attempts have failed" in item["content"] for item in local_agent.messages if item.get("role") == "user"))
+
 
 if __name__ == "__main__":
     unittest.main()
